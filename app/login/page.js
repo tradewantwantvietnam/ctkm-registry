@@ -1,10 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
-  const router = useRouter();
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -13,23 +11,48 @@ export default function LoginPage() {
     e.preventDefault();
     setError('');
     setLoading(true);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+
     try {
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
+        signal: controller.signal,
       });
-      const out = await res.json();
+
+      let out = null;
+      try {
+        out = await res.json();
+      } catch (err) {
+        out = null;
+      }
+
+      if (!out) {
+        setError('Máy chủ trả về dữ liệu lạ (mã ' + res.status + '). Kiểm tra lại biến môi trường trên Vercel.');
+        setLoading(false);
+        return;
+      }
+
       if (!out.ok) {
         setError(out.error || 'Đăng nhập thất bại');
         setLoading(false);
         return;
       }
-      router.push('/');
-      router.refresh();
+
+      // Đăng nhập thành công: tải lại hẳn trang chủ
+      window.location.href = '/';
     } catch (err) {
-      setError('Lỗi kết nối, thử lại sau');
+      if (err && err.name === 'AbortError') {
+        setError('Quá thời gian chờ (20 giây). Thử lại hoặc kiểm tra cấu hình Vercel.');
+      } else {
+        setError('Lỗi kết nối, thử lại sau');
+      }
       setLoading(false);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
