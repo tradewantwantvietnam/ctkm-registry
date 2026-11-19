@@ -8,7 +8,7 @@ import ProgramForm from '@/components/ProgramForm';
 function EditInner() {
   const sp = useSearchParams();
   const id = sp.get('id') || '';
-  const [program, setProgram] = useState(null);
+  const [detail, setDetail] = useState(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -16,18 +16,18 @@ function EditInner() {
       setError('Thiếu số thông báo');
       return;
     }
-    api('get', { id })
-      .then((p) => setProgram(p))
+    api('getDetail', { id })
+      .then((d) => setDetail(d))
       .catch((e) => setError(e.message));
   }, [id]);
 
   if (error) return <div className="alert alert-error">Lỗi: {error}</div>;
-  if (!program) return <div className="muted">Đang tải...</div>;
+  if (!detail) return <div className="muted">Đang tải...</div>;
 
   return (
     <div>
-      <h1>Sửa chương trình {program.so_thong_bao}</h1>
-      <ProgramForm initial={program} isEdit={true} />
+      <h1>Sửa chương trình {detail.program.so_thong_bao}</h1>
+      <ProgramForm initial={detail.program} budgets={detail.budgets} isEdit={true} />
     </div>
   );
 }
