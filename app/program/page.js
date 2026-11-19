@@ -1,19 +1,20 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Fragment, Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import {
+  ALL_REGION,
+  KIEU_BS,
   formatVND,
   formatDate,
   formatDateTime,
   formatPercent,
-  LOAI_TAM,
-  LOAI_CHOT,
+  formatMonth,
 } from '@/lib/format';
 import { WarnBadge, StatusBadge, Progress } from '@/components/Badges';
-import MoneyInput from '@/components/MoneyInput';
+import CostEntry from '@/components/CostEntry';
 import FileManager from '@/components/FileManager';
 
 function Detail() {
@@ -21,23 +22,16 @@ function Detail() {
   const id = sp.get('id') || '';
   const notice = sp.get('notice') || '';
 
-  const [p, setP] = useState(null);
-  const [log, setLog] = useState([]);
+  const [detail, setDetail] = useState(null);
+  const [refs, setRefs] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
-  const [cost, setCost] = useState({ chi_phi: '', loai: LOAI_TAM, ghi_chu: '' });
-  const [saving, setSaving] = useState(false);
 
   async function load() {
-    const [prog, lg] = await Promise.all([api('get', { id }), api('costLog', { id })]);
-    setP(prog);
-    setLog(lg);
-    setCost({
-      chi_phi: prog.loai_chi_phi ? String(Math.round(prog.chi_phi)) : '',
-      loai: prog.loai_chi_phi === LOAI_CHOT ? LOAI_CHOT : LOAI_TAM,
-      ghi_chu: '',
-    });
+    const [d, r] = await Promise.all([api('getDetail', { id }), api('refs')]);
+    setDetail(d);
+    setRefs(r);
   }
 
   useEffect(() => {
@@ -54,44 +48,10 @@ function Detail() {
       });
   }, [id]);
 
-  async function saveCost(e) {
-    e.preventDefault();
-    setMsg('');
-    setError('');
-
-    if (cost.chi_phi === '') return setError('Chưa nhập chi phí');
-    const locked = p.loai_chi_phi === LOAI_CHOT;
-    if (locked && !cost.ghi_chu.trim()) {
-      return setError('Chương trình đã chốt quyết toán. Muốn sửa phải ghi lý do vào ô ghi chú.');
-    }
-    if (cost.loai === LOAI_CHOT) {
-      const ok = window.confirm(
-        'Chốt quyết toán chương trình này với số tiền ' + formatVND(cost.chi_phi) + ' đ?'
-      );
-      if (!ok) return;
-    }
-
-    setSaving(true);
-    try {
-      await api('updateCost', {
-        data: {
-          so_thong_bao: p.so_thong_bao,
-          chi_phi: Number(cost.chi_phi),
-          loai_chi_phi: cost.loai,
-          ghi_chu: cost.ghi_chu,
-        },
-      });
-      await load();
-      setMsg('Đã lưu chi phí');
-    } catch (err) {
-      setError(err.message);
-    }
-    setSaving(false);
-  }
-
   async function onDelete() {
+    const p = detail.program;
     const ok = window.confirm(
-      'Ẩn chương trình ' + p.so_thong_bao + ' khỏi danh sách? (Dữ liệu vẫn được giữ trong Google Sheet)'
+      'Ẩn chương trình ' + p.so_thong_bao + ' khỏi danh sách? (Dữ liệu vẫn được giữ, có thể khôi phục sau)'
     );
     if (!ok) return;
     try {
@@ -102,15 +62,41 @@ function Detail() {
     }
   }
 
+  async function onDeleteCost(g) {
+    const ok = window.confirm('Xóa lần nhập chi phí này (' + g.items.length + ' khoản)? Số liệu sẽ được tính lại.');
+    if (!ok) return;
+    setError('');
+    setMsg('');
+    try {
+      await api('deleteCost', { data: { lan_nhap: g.lan_nhap } });
+      await load();
+      setMsg('Đã xóa lần nhập chi phí');
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   if (loading) return <div className="muted">Đang tải...</div>;
-  if (!p) {
+  if (!detail) {
     return <div className="alert alert-error">Lỗi: {error || 'Không tải được chương trình'}</div>;
   }
 
-  const locked = p.loai_chi_phi === LOAI_CHOT;
-  const hasCost = !!p.loai_chi_phi;
-  const newCost = Number(cost.chi_phi || 0);
-  const newRatio = p.ngan_sach > 0 ? newCost / p.ngan_sach : 0;
+  const p = detail.program;
+  const vuotMonths = p.thang_ds.filter((m) => m.canh_bao === 'vuot');
+  const sapMonths = p.thang_ds.filter((m) => m.canh_bao === 'sap_vuot');
+  const treMonths = p.thang_ds.filter((m) => m.so_ngay_tre > 0);
+
+  // Gom các dòng chi phí theo lần nhập, mới nhất lên đầu
+  const map = {};
+  const order = [];
+  detail.costs.forEach((c) => {
+    if (!map[c.lan_nhap]) {
+      map[c.lan_nhap] = { ...c, items: [] };
+      order.push(c.lan_nhap);
+    }
+    map[c.lan_nhap].items.push(c);
+  });
+  const groups = order.map((k) => map[k]).sort((a, b) => (a.ngay_nhap < b.ngay_nhap ? 1 : -1));
 
   return (
     <div>
@@ -123,7 +109,7 @@ function Detail() {
             Về danh sách
           </Link>
           <Link className="btn" href={'/edit?id=' + encodeURIComponent(p.so_thong_bao)}>
-            Sửa thông tin
+            Sửa thông tin và ngân sách
           </Link>
           <button className="btn btn-danger" onClick={onDelete}>
             Ẩn chương trình
@@ -139,20 +125,22 @@ function Detail() {
       {error && <div className="alert alert-error">{error}</div>}
       {msg && <div className="alert alert-ok">{msg}</div>}
 
-      {p.canh_bao === 'vuot' && (
+      {vuotMonths.length > 0 && (
         <div className="alert alert-error">
-          <b>VƯỢT NGÂN SÁCH:</b> chi phí đã vượt {formatVND(p.so_tien_vuot)} đ ({formatPercent(p.ty_le)} ngân sách).
+          <b>VƯỢT NGÂN SÁCH:</b>{' '}
+          {vuotMonths.map((m) => formatMonth(m.thang) + ' vượt ' + formatVND(m.so_tien_vuot) + ' đ').join('; ')}.
         </div>
       )}
-      {p.canh_bao === 'sap_vuot' && (
+      {sapMonths.length > 0 && (
         <div className="alert alert-warn">
-          <b>SẮP VƯỢT NGÂN SÁCH:</b> chi phí đã dùng {formatPercent(p.ty_le)} ngân sách, còn lại{' '}
-          {formatVND(p.ngan_sach - p.chi_phi)} đ.
+          <b>SẮP VƯỢT NGÂN SÁCH:</b>{' '}
+          {sapMonths.map((m) => formatMonth(m.thang) + ' đã dùng ' + formatPercent(m.ty_le)).join('; ')}.
         </div>
       )}
-      {p.so_ngay_tre > 0 && (
+      {treMonths.length > 0 && (
         <div className="alert alert-warn">
-          <b>CHƯA QUYẾT TOÁN:</b> chương trình đã kết thúc {p.so_ngay_tre} ngày nhưng chưa chốt chi phí.
+          <b>CHƯA QUYẾT TOÁN:</b>{' '}
+          {treMonths.map((m) => formatMonth(m.thang) + ' trễ ' + m.so_ngay_tre + ' ngày').join('; ')}.
         </div>
       )}
 
@@ -181,29 +169,23 @@ function Detail() {
             </div>
           </div>
           <div>
-            <div className="muted">Ngân sách dự kiến theo A&P</div>
+            <div className="muted">Tổng ngân sách A&P</div>
             <div>
               <b>{formatVND(p.ngan_sach)} đ</b>
             </div>
           </div>
           <div>
-            <div className="muted">Chi phí hiện tại</div>
+            <div className="muted">Tổng chi phí hiện có</div>
             <div>
-              {hasCost ? (
+              {p.co_chi_phi ? (
                 <span>
-                  <b>{formatVND(p.chi_phi)} đ</b> ({p.loai_chi_phi}, cập nhật{' '}
-                  {formatDateTime(p.ngay_cap_nhat_chi_phi)})
+                  <b>{formatVND(p.chi_phi)} đ</b> (cập nhật {formatDateTime(p.ngay_cap_nhat_chi_phi)})
                 </span>
               ) : (
                 <span className="muted">Chưa có</span>
               )}
             </div>
           </div>
-          {hasCost && (
-            <div className="full">
-              <Progress ratio={p.ty_le} level={p.canh_bao} />
-            </div>
-          )}
           <div className="full">
             <div className="muted">Nội dung cơ bản</div>
             <div style={{ whiteSpace: 'pre-wrap' }}>{p.noi_dung || '-'}</div>
@@ -216,91 +198,172 @@ function Detail() {
       </div>
 
       <div className="card">
-        <h2>Cập nhật chi phí</h2>
-        {locked && (
-          <div className="alert alert-warn">
-            Chương trình đã <b>chốt quyết toán</b>. Muốn sửa số liệu, phải ghi lý do vào ô ghi chú.
+        <h2>Ngân sách và chi phí theo tháng</h2>
+        {p.thang_ds.length === 0 ? (
+          <div className="muted">Chưa có ngân sách nào. Bấm "Sửa thông tin và ngân sách" để nhập.</div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tháng</th>
+                  <th>Vùng</th>
+                  <th className="num">Ngân sách</th>
+                  <th className="num">Chi phí</th>
+                  <th className="num">Còn lại</th>
+                  <th>Sử dụng</th>
+                  <th>Trạng thái</th>
+                </tr>
+              </thead>
+              <tbody>
+                {p.thang_ds.map((m) => {
+                  const regional =
+                    m.vung_ds.length > 1 || (m.vung_ds[0] && m.vung_ds[0].vung !== ALL_REGION);
+                  const rowCls =
+                    m.canh_bao === 'vuot' ? 'row-danger' : m.canh_bao === 'sap_vuot' ? 'row-warn' : '';
+                  const left = m.ngan_sach - m.chi_phi;
+                  return (
+                    <Fragment key={m.thang}>
+                      <tr className={rowCls}>
+                        <td style={{ fontWeight: 700 }}>{formatMonth(m.thang)}</td>
+                        <td>{regional ? <span className="muted">Tổng tháng</span> : ALL_REGION}</td>
+                        <td className="num">{formatVND(m.ngan_sach)}</td>
+                        <td className="num">{m.co_chi_phi ? formatVND(m.chi_phi) : <span className="muted">Chưa có</span>}</td>
+                        <td className="num" style={{ color: left < 0 ? '#b91c1c' : undefined }}>
+                          {formatVND(left)}
+                        </td>
+                        <td>
+                          {m.co_chi_phi ? (
+                            <Progress ratio={m.ty_le} level={m.canh_bao} />
+                          ) : (
+                            <span className="muted">-</span>
+                          )}
+                        </td>
+                        <td>
+                          <div className="row" style={{ gap: 4 }}>
+                            {m.da_chot ? (
+                              <span className="badge badge-ok">Đã chốt</span>
+                            ) : m.co_chi_phi ? (
+                              <span className="badge badge-gray">Tạm tính</span>
+                            ) : (
+                              <span className="badge badge-gray">Chưa có chi phí</span>
+                            )}
+                            {m.canh_bao !== 'binh_thuong' && <WarnBadge level={m.canh_bao} />}
+                            {m.so_ngay_tre > 0 && (
+                              <span className="badge badge-warn">Trễ QT {m.so_ngay_tre} ngày</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                      {regional &&
+                        m.vung_ds.map((v) => {
+                          const vLeft = v.ngan_sach - v.chi_phi;
+                          return (
+                            <tr key={m.thang + '|' + v.vung} style={{ fontSize: 13 }}>
+                              <td></td>
+                              <td style={{ paddingLeft: 24 }}>{v.vung}</td>
+                              <td className="num">{formatVND(v.ngan_sach)}</td>
+                              <td className="num">
+                                {v.co_chi_phi ? formatVND(v.chi_phi) : <span className="muted">-</span>}
+                              </td>
+                              <td className="num" style={{ color: vLeft < 0 ? '#b91c1c' : undefined }}>
+                                {formatVND(vLeft)}
+                              </td>
+                              <td>
+                                {v.co_chi_phi ? (
+                                  <Progress ratio={v.ty_le} level={v.canh_bao} />
+                                ) : (
+                                  <span className="muted">-</span>
+                                )}
+                              </td>
+                              <td>
+                                {v.da_chot ? (
+                                  <span className="badge badge-ok">Đã chốt</span>
+                                ) : v.co_chi_phi ? (
+                                  <span className="badge badge-gray">Tạm tính</span>
+                                ) : (
+                                  ''
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan={2} style={{ fontWeight: 700 }}>
+                    Tổng chương trình
+                  </td>
+                  <td className="num" style={{ fontWeight: 700 }}>
+                    {formatVND(p.ngan_sach)}
+                  </td>
+                  <td className="num" style={{ fontWeight: 700 }}>
+                    {formatVND(p.chi_phi)}
+                  </td>
+                  <td className="num" style={{ fontWeight: 700 }}>
+                    {formatVND(p.ngan_sach - p.chi_phi)}
+                  </td>
+                  <td colSpan={2}>{p.co_chi_phi ? formatPercent(p.ty_le) : ''}</td>
+                </tr>
+              </tfoot>
+            </table>
           </div>
         )}
-        <form onSubmit={saveCost}>
-          <div className="form-grid">
-            <div>
-              <label htmlFor="cp">Chi phí thực tế (đồng)</label>
-              <MoneyInput
-                id="cp"
-                value={cost.chi_phi}
-                onChange={(v) => setCost((c) => ({ ...c, chi_phi: v }))}
-              />
-              {cost.chi_phi !== '' && p.ngan_sach > 0 && (
-                <div
-                  className="hint"
-                  style={{
-                    color: newCost > p.ngan_sach ? '#b91c1c' : newRatio >= 0.8 ? '#b45309' : undefined,
-                  }}
-                >
-                  {newCost > p.ngan_sach
-                    ? 'Sẽ VƯỢT ngân sách ' + formatVND(newCost - p.ngan_sach) + ' đ (' + formatPercent(newRatio) + ')'
-                    : newRatio >= 0.8
-                    ? 'Sẽ ở mức SẮP VƯỢT (' + formatPercent(newRatio) + ' ngân sách)'
-                    : 'Bằng ' + formatPercent(newRatio) + ' ngân sách'}
-                </div>
-              )}
-            </div>
-            <div>
-              <label htmlFor="loai">Loại số liệu</label>
-              <select
-                id="loai"
-                value={cost.loai}
-                onChange={(e) => setCost((c) => ({ ...c, loai: e.target.value }))}
-              >
-                <option value={LOAI_TAM}>{LOAI_TAM} (giữa kỳ, dùng để cảnh báo sớm)</option>
-                <option value={LOAI_CHOT}>{LOAI_CHOT} (quyết toán chính thức)</option>
-              </select>
-            </div>
-            <div className="full">
-              <label htmlFor="gc">
-                Ghi chú / lý do {locked ? '(bắt buộc khi sửa số đã chốt)' : '(không bắt buộc)'}
-              </label>
-              <input
-                id="gc"
-                type="text"
-                value={cost.ghi_chu}
-                onChange={(e) => setCost((c) => ({ ...c, ghi_chu: e.target.value }))}
-              />
-            </div>
-          </div>
-          <div style={{ marginTop: 14 }}>
-            <button className="btn btn-primary" type="submit" disabled={saving}>
-              {saving ? 'Đang lưu...' : 'Lưu chi phí'}
-            </button>
-          </div>
-        </form>
       </div>
+
+      <CostEntry detail={detail} refs={refs} onSaved={load} />
 
       <FileManager soThongBao={p.so_thong_bao} />
 
       <div className="card">
         <h2>Lịch sử nhập chi phí</h2>
-        {log.length === 0 ? (
+        {groups.length === 0 ? (
           <div className="muted">Chưa có lần nhập nào</div>
         ) : (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Thời gian</th>
-                  <th className="num">Chi phí</th>
-                  <th>Loại</th>
+                  <th>Ngày nhập</th>
+                  <th>Kiểu</th>
+                  <th>Thời gian thực hiện</th>
+                  <th>Chi tiết</th>
                   <th>Ghi chú</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
-                {log.map((l, i) => (
-                  <tr key={i}>
-                    <td style={{ whiteSpace: 'nowrap' }}>{formatDateTime(l.thoi_gian)}</td>
-                    <td className="num">{formatVND(l.chi_phi)}</td>
-                    <td>{l.loai_chi_phi}</td>
-                    <td>{l.ghi_chu}</td>
+                {groups.map((g) => (
+                  <tr key={g.lan_nhap}>
+                    <td style={{ whiteSpace: 'nowrap' }}>{formatDateTime(g.ngay_nhap)}</td>
+                    <td>
+                      {g.kieu}
+                      {g.kieu === KIEU_BS && g.ly_do && <div className="muted" style={{ fontSize: 12 }}>{g.ly_do}</div>}
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {formatDate(g.tu_ngay)} - {formatDate(g.den_ngay)}
+                    </td>
+                    <td>
+                      {g.items.map((it, i) => (
+                        <div key={i} style={{ whiteSpace: 'nowrap' }}>
+                          {formatMonth(it.thang)}
+                          {it.vung !== ALL_REGION ? ' - ' + it.vung : ''}:{' '}
+                          <b>
+                            {g.kieu === KIEU_BS ? '+' : ''}
+                            {formatVND(it.so_tien)}
+                          </b>
+                        </div>
+                      ))}
+                    </td>
+                    <td>{g.ghi_chu}</td>
+                    <td>
+                      <button className="btn btn-small btn-danger" onClick={() => onDeleteCost(g)}>
+                        Xóa
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
