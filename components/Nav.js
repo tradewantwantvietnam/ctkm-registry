@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 const LINKS = [
   { href: '/', label: 'Danh sách' },
   { href: '/new', label: 'Thêm chương trình' },
+  { href: '/import', label: 'Nhập từ Excel' },
   { href: '/settle', label: 'Quyết toán' },
   { href: '/alerts', label: 'Báo động' },
   { href: '/export', label: 'Trích lục' },
@@ -29,14 +30,9 @@ export default function Nav() {
         <span className="nav-brand">Kho CTKM</span>
         <div className="nav-links">
           {LINKS.map((l) => {
-            const active =
-              l.href === '/' ? pathname === '/' : pathname.startsWith(l.href);
+            const active = l.href === '/' ? pathname === '/' : pathname.startsWith(l.href);
             return (
-              <Link
-                key={l.href}
-                href={l.href}
-                className={active ? 'nav-link active' : 'nav-link'}
-              >
+              <Link key={l.href} href={l.href} className={active ? 'nav-link active' : 'nav-link'}>
                 {l.label}
               </Link>
             );
