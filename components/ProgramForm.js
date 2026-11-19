@@ -2,10 +2,17 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { api, fileToBase64, MAX_PDF_MB } from '@/lib/api';
-import MoneyInput from '@/components/MoneyInput';
+import { api, uploadBigPdf, MAX_BIG_PDF_MB } from '@/lib/api';
+import { LOAI_TAI_LIEU } from '@/lib/format';
+import NameListManager from '@/components/NameListManager';
+import BudgetEditor, {
+  emptyBudgetState,
+  budgetStateFrom,
+  budgetsFromState,
+  renameRegionInState,
+} from '@/components/BudgetEditor';
 
-export default function ProgramForm({ initial, isEdit }) {
+export default function ProgramForm({ initial, budgets, isEdit }) {
   const router = useRouter();
 
   const [form, setForm] = useState({
@@ -14,94 +21,74 @@ export default function ProgramForm({ initial, isEdit }) {
     hinh_thuc: initial ? initial.hinh_thuc : '',
     ngay_bd: initial ? initial.ngay_bd : '',
     ngay_kt: initial ? initial.ngay_kt : '',
-    ngan_sach: initial ? String(Math.round(initial.ngan_sach)) : '',
     noi_dung: initial ? initial.noi_dung : '',
     ghi_chu: initial ? initial.ghi_chu : '',
   });
+  const [bstate, setBstate] = useState(() =>
+    budgets && budgets.length ? budgetStateFrom(budgets) : emptyBudgetState()
+  );
+
+  const [types, setTypes] = useState([]);
+  const [regions, setRegions] = useState([]);
+  const [showTypeMgr, setShowTypeMgr] = useState(false);
+
   const [file, setFile] = useState(null);
+  const [docName, setDocName] = useState('');
+  const [docType, setDocType] = useState(LOAI_TAI_LIEU[0]);
+  const [pct, setPct] = useState(0);
+
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
-
-  // Quản lý hình thức khuyến mãi
-  const [types, setTypes] = useState([]);
-  const [showMgr, setShowMgr] = useState(false);
-  const [newType, setNewType] = useState('');
-  const [editing, setEditing] = useState(null); // { old: '...', value: '...' }
-  const [mgrBusy, setMgrBusy] = useState(false);
-  const [mgrMsg, setMgrMsg] = useState('');
-  const [mgrErr, setMgrErr] = useState('');
 
   function set(name, value) {
     setForm((f) => ({ ...f, [name]: value }));
   }
 
   useEffect(() => {
-    api('listTypes')
-      .then((list) => setTypes(list))
-      .catch((e) => setMgrErr('Không tải được danh sách hình thức: ' + e.message));
+    api('refs')
+      .then((r) => {
+        setTypes(r.types || []);
+        setRegions(r.regions || []);
+      })
+      .catch((e) => setError('Không tải được danh mục: ' + e.message));
   }, []);
 
   const hinhOptions =
-    !form.hinh_thuc || types.includes(form.hinh_thuc)
-      ? types
-      : [form.hinh_thuc, ...types];
+    !form.hinh_thuc || types.includes(form.hinh_thuc) ? types : [form.hinh_thuc, ...types];
 
-  async function addType() {
-    setMgrErr('');
-    setMgrMsg('');
-    const name = newType.trim();
-    if (!name) {
-      setMgrErr('Chưa nhập tên hình thức');
-      return;
-    }
-    setMgrBusy(true);
-    try {
-      const list = await api('addType', { data: { ten: name } });
-      setTypes(list);
-      const found = list.find((t) => t.toLowerCase() === name.toLowerCase());
-      set('hinh_thuc', found || name);
-      setNewType('');
-      setMgrMsg('Đã thêm hình thức "' + name + '" và chọn cho chương trình này');
-    } catch (e) {
-      setMgrErr(e.message);
-    }
-    setMgrBusy(false);
+  /* ----- Hình thức KM ----- */
+  async function addType(name) {
+    const list = await api('addType', { data: { ten: name } });
+    setTypes(list);
+    const found = list.find((t) => t.toLowerCase() === name.toLowerCase());
+    set('hinh_thuc', found || name);
   }
 
-  async function saveRename() {
-    if (!editing) return;
-    setMgrErr('');
-    setMgrMsg('');
-    const oldName = editing.old;
-    const newName = editing.value.trim();
-    if (!newName) {
-      setMgrErr('Chưa nhập tên mới');
-      return;
-    }
-    if (newName === oldName) {
-      setEditing(null);
-      return;
-    }
-    const ok = window.confirm(
-      'Đổi tên hình thức "' + oldName + '" thành "' + newName + '"?\n\nTất cả chương trình đang dùng hình thức này sẽ đổi theo.'
+  async function renameType(oldName, newName) {
+    const list = await api('renameType', { data: { ten_cu: oldName, ten_moi: newName } });
+    setTypes(list);
+    if (form.hinh_thuc === oldName) set('hinh_thuc', newName);
+  }
+
+  /* ----- Vùng miền ----- */
+  async function addRegion(name) {
+    const list = await api('addRegion', { data: { ten: name } });
+    setRegions(list);
+    const found = list.find((t) => t.toLowerCase() === name.toLowerCase());
+    setBstate((s) =>
+      s.scope === 'regions' && found && !s.regions.includes(found)
+        ? { ...s, regions: [...s.regions, found] }
+        : s
     );
-    if (!ok) return;
-
-    setMgrBusy(true);
-    try {
-      const list = await api('renameType', {
-        data: { ten_cu: oldName, ten_moi: newName },
-      });
-      setTypes(list);
-      if (form.hinh_thuc === oldName) set('hinh_thuc', newName);
-      setEditing(null);
-      setMgrMsg('Đã đổi tên thành "' + newName + '"');
-    } catch (e) {
-      setMgrErr(e.message);
-    }
-    setMgrBusy(false);
   }
 
+  async function renameRegion(oldName, newName) {
+    const list = await api('renameRegion', { data: { ten_cu: oldName, ten_moi: newName } });
+    setRegions(list);
+    setBstate((s) => renameRegionInState(s, oldName, newName));
+  }
+
+  /* ----- File PDF (chỉ khi thêm mới) ----- */
   function onPickFile(e) {
     const f = e.target.files && e.target.files[0];
     setError('');
@@ -116,13 +103,14 @@ export default function ProgramForm({ initial, isEdit }) {
       setFile(null);
       return;
     }
-    if (f.size > MAX_PDF_MB * 1024 * 1024) {
-      setError('File quá lớn (tối đa ' + MAX_PDF_MB + 'MB). Hãy nén PDF rồi chọn lại.');
+    if (f.size === 0 || f.size > MAX_BIG_PDF_MB * 1024 * 1024) {
+      setError('File phải có dung lượng từ 1 byte đến ' + MAX_BIG_PDF_MB + 'MB. Hãy nén PDF rồi chọn lại.');
       e.target.value = '';
       setFile(null);
       return;
     }
     setFile(f);
+    if (!docName) setDocName(f.name.replace(/\.pdf$/i, ''));
   }
 
   async function onSubmit(e) {
@@ -136,7 +124,10 @@ export default function ProgramForm({ initial, isEdit }) {
     if (form.ngay_kt < form.ngay_bd) {
       return setError('Ngày kết thúc phải sau hoặc bằng ngày bắt đầu');
     }
-    if (form.ngan_sach === '') return setError('Chưa nhập ngân sách A&P');
+    if (file && !docName.trim()) return setError('Chưa nhập tên tài liệu cho file PDF');
+
+    const b = budgetsFromState(bstate, form.ngay_bd, form.ngay_kt);
+    if (b.error) return setError(b.error);
 
     setSaving(true);
     try {
@@ -147,19 +138,20 @@ export default function ProgramForm({ initial, isEdit }) {
           hinh_thuc: form.hinh_thuc,
           ngay_bd: form.ngay_bd,
           ngay_kt: form.ngay_kt,
-          ngan_sach: Number(form.ngan_sach),
           noi_dung: form.noi_dung,
           ghi_chu: form.ghi_chu,
+          budgets: b.budgets,
         },
       });
 
       let notice = '';
-      if (file) {
+      if (file && !isEdit) {
         try {
-          const b64 = await fileToBase64(file);
-          await api('uploadPdf', {
-            data: { so_thong_bao: id, file_name: file.name, base64: b64 },
-          });
+          await uploadBigPdf(
+            file,
+            { so_thong_bao: id, ten_hien_thi: docName.trim(), loai_tai_lieu: docType },
+            setPct
+          );
         } catch (err) {
           notice = '&notice=pdf_fail';
         }
@@ -192,11 +184,7 @@ export default function ProgramForm({ initial, isEdit }) {
 
         <div>
           <label htmlFor="hinh_thuc">Hình thức khuyến mãi</label>
-          <select
-            id="hinh_thuc"
-            value={form.hinh_thuc}
-            onChange={(e) => set('hinh_thuc', e.target.value)}
-          >
+          <select id="hinh_thuc" value={form.hinh_thuc} onChange={(e) => set('hinh_thuc', e.target.value)}>
             <option value="">-- Chọn --</option>
             {hinhOptions.map((h) => (
               <option key={h} value={h}>
@@ -205,207 +193,118 @@ export default function ProgramForm({ initial, isEdit }) {
             ))}
           </select>
           <div style={{ marginTop: 4 }}>
-            <button
-              type="button"
-              className="btn btn-small"
-              onClick={() => {
-                setShowMgr((v) => !v);
-                setMgrErr('');
-                setMgrMsg('');
-                setEditing(null);
-              }}
-            >
-              {showMgr ? 'Đóng quản lý hình thức' : 'Thêm / đổi tên hình thức'}
+            <button type="button" className="btn btn-small" onClick={() => setShowTypeMgr((v) => !v)}>
+              {showTypeMgr ? 'Đóng quản lý hình thức' : 'Thêm / đổi tên hình thức'}
             </button>
           </div>
         </div>
 
-        {showMgr && (
+        {showTypeMgr && (
           <div className="full">
-            <div
-              style={{
-                border: '1px solid #bfdbfe',
-                background: '#eff6ff',
-                borderRadius: 8,
-                padding: 12,
-              }}
-            >
-              <div style={{ fontWeight: 600, marginBottom: 8 }}>Quản lý hình thức khuyến mãi</div>
-
-              {mgrErr && <div className="alert alert-error">{mgrErr}</div>}
-              {mgrMsg && <div className="alert alert-ok">{mgrMsg}</div>}
-
-              <label htmlFor="new_type">Thêm hình thức mới</label>
-              <div className="row" style={{ marginBottom: 14 }}>
-                <input
-                  id="new_type"
-                  type="text"
-                  style={{ flex: 1, minWidth: 200 }}
-                  placeholder="Ví dụ: Tích điểm đổi quà"
-                  value={newType}
-                  onChange={(e) => setNewType(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      if (!mgrBusy) addType();
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={mgrBusy || !newType.trim()}
-                  onClick={addType}
-                >
-                  Thêm
-                </button>
-              </div>
-
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>Các hình thức hiện có</div>
-              {types.length === 0 && <div className="muted">Chưa có hình thức nào</div>}
-              {types.map((t) => (
-                <div
-                  key={t}
-                  className="row"
-                  style={{ marginBottom: 6, justifyContent: 'space-between' }}
-                >
-                  {editing && editing.old === t ? (
-                    <>
-                      <input
-                        type="text"
-                        style={{ flex: 1, minWidth: 200 }}
-                        value={editing.value}
-                        autoFocus
-                        onChange={(e) => setEditing({ old: t, value: e.target.value })}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            if (!mgrBusy) saveRename();
-                          }
-                        }}
-                      />
-                      <div className="row" style={{ gap: 6 }}>
-                        <button
-                          type="button"
-                          className="btn btn-small btn-primary"
-                          disabled={mgrBusy}
-                          onClick={saveRename}
-                        >
-                          Lưu tên mới
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-small"
-                          disabled={mgrBusy}
-                          onClick={() => setEditing(null)}
-                        >
-                          Hủy
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <span>{t}</span>
-                      <button
-                        type="button"
-                        className="btn btn-small"
-                        disabled={mgrBusy}
-                        onClick={() => {
-                          setMgrErr('');
-                          setMgrMsg('');
-                          setEditing({ old: t, value: t });
-                        }}
-                      >
-                        Đổi tên
-                      </button>
-                    </>
-                  )}
-                </div>
-              ))}
-              <div className="hint">
-                Đổi tên sẽ áp dụng cho tất cả chương trình đang dùng hình thức đó.
-              </div>
-            </div>
+            <NameListManager
+              title="Quản lý hình thức khuyến mãi"
+              items={types}
+              placeholder="Ví dụ: Tích điểm đổi quà"
+              onAdd={addType}
+              onRename={renameType}
+            />
           </div>
         )}
 
         <div className="full">
           <label htmlFor="ten">Tên chương trình *</label>
-          <input
-            id="ten"
-            type="text"
-            value={form.ten}
-            onChange={(e) => set('ten', e.target.value)}
-          />
+          <input id="ten" type="text" value={form.ten} onChange={(e) => set('ten', e.target.value)} />
         </div>
 
         <div>
           <label htmlFor="ngay_bd">Ngày bắt đầu *</label>
-          <input
-            id="ngay_bd"
-            type="date"
-            value={form.ngay_bd}
-            onChange={(e) => set('ngay_bd', e.target.value)}
-          />
+          <input id="ngay_bd" type="date" value={form.ngay_bd} onChange={(e) => set('ngay_bd', e.target.value)} />
         </div>
 
         <div>
           <label htmlFor="ngay_kt">Ngày kết thúc *</label>
-          <input
-            id="ngay_kt"
-            type="date"
-            value={form.ngay_kt}
-            onChange={(e) => set('ngay_kt', e.target.value)}
-          />
+          <input id="ngay_kt" type="date" value={form.ngay_kt} onChange={(e) => set('ngay_kt', e.target.value)} />
         </div>
 
-        <div>
-          <label htmlFor="ngan_sach">Ngân sách dự kiến theo A&P (đồng) *</label>
-          <MoneyInput
-            id="ngan_sach"
-            value={form.ngan_sach}
-            onChange={(v) => set('ngan_sach', v)}
-          />
-        </div>
-
-        <div>
-          <label htmlFor="ghi_chu">Ghi chú</label>
-          <input
-            id="ghi_chu"
-            type="text"
-            value={form.ghi_chu}
-            onChange={(e) => set('ghi_chu', e.target.value)}
+        <div className="full">
+          <BudgetEditor
+            ngayBd={form.ngay_bd}
+            ngayKt={form.ngay_kt}
+            state={bstate}
+            onChange={setBstate}
+            regions={regions}
+            onAddRegion={addRegion}
+            onRenameRegion={renameRegion}
           />
         </div>
 
         <div className="full">
           <label htmlFor="noi_dung">Nội dung cơ bản của chương trình</label>
-          <textarea
-            id="noi_dung"
-            value={form.noi_dung}
-            onChange={(e) => set('noi_dung', e.target.value)}
-          />
+          <textarea id="noi_dung" value={form.noi_dung} onChange={(e) => set('noi_dung', e.target.value)} />
+        </div>
+
+        <div className="full">
+          <label htmlFor="ghi_chu">Ghi chú</label>
+          <input id="ghi_chu" type="text" value={form.ghi_chu} onChange={(e) => set('ghi_chu', e.target.value)} />
         </div>
 
         {!isEdit && (
           <div className="full">
-            <label htmlFor="pdf">File PDF scan (không bắt buộc, có thể tải sau)</label>
-            <input id="pdf" type="file" accept="application/pdf,.pdf" onChange={onPickFile} />
-            <div className="hint">Tối đa {MAX_PDF_MB}MB. Nếu scan nặng hơn, hãy nén PDF trước.</div>
+            <div style={{ border: '1px dashed #9ca3af', borderRadius: 8, padding: 12, background: '#f9fafb' }}>
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>
+                File PDF scan (không bắt buộc, có thể tải thêm sau ở trang chi tiết)
+              </div>
+              <div className="form-grid">
+                <div className="full">
+                  <input type="file" accept="application/pdf,.pdf" onChange={onPickFile} disabled={saving} />
+                  <div className="hint">Tối đa {MAX_BIG_PDF_MB}MB.</div>
+                </div>
+                {file && (
+                  <>
+                    <div>
+                      <label htmlFor="doc_name">Tên tài liệu *</label>
+                      <input
+                        id="doc_name"
+                        type="text"
+                        value={docName}
+                        disabled={saving}
+                        onChange={(e) => setDocName(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="doc_type">Loại tài liệu</label>
+                      <select
+                        id="doc_type"
+                        value={docType}
+                        disabled={saving}
+                        onChange={(e) => setDocType(e.target.value)}
+                      >
+                        {LOAI_TAI_LIEU.map((l) => (
+                          <option key={l} value={l}>
+                            {l}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>
 
       <div className="row" style={{ marginTop: 16 }}>
         <button className="btn btn-primary" type="submit" disabled={saving}>
-          {saving ? 'Đang lưu...' : isEdit ? 'Lưu thay đổi' : 'Lưu chương trình'}
+          {saving
+            ? file && pct > 0
+              ? 'Đang tải PDF ' + pct + '%...'
+              : 'Đang lưu...'
+            : isEdit
+            ? 'Lưu thay đổi'
+            : 'Lưu chương trình'}
         </button>
-        <button
-          className="btn"
-          type="button"
-          disabled={saving}
-          onClick={() => router.back()}
-        >
+        <button className="btn" type="button" disabled={saving} onClick={() => router.back()}>
           Hủy
         </button>
       </div>
