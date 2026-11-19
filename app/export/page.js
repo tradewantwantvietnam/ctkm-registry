@@ -2,12 +2,16 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { api } from '@/lib/api';
-import { formatVND, formatDate, monthOf } from '@/lib/format';
+import { api, getPdfBlob } from '@/lib/api';
+import { formatVND, formatDate, formatSize, monthOf } from '@/lib/format';
 import { StatusBadge, WarnBadge } from '@/components/Badges';
 import { exportProgramsCSV, downloadBlob, todayTag } from '@/lib/export';
 
 const STATUS_OPTIONS = ['Chưa chạy', 'Đang chạy', 'Đã kết thúc', 'Đã quyết toán'];
+
+function safe(s) {
+  return String(s || '').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'khong-ten';
+}
 
 export default function ExportPage() {
   const [rows, setRows] = useState([]);
@@ -63,6 +67,7 @@ export default function ExportPage() {
   }, [rows, q, month, status, hinh, onlyPdf]);
 
   const withPdf = filtered.filter((r) => r.co_pdf);
+  const totalFiles = filtered.reduce((s, r) => s + (r.so_pdf || 0), 0);
   const totalNS = filtered.reduce((s, r) => s + r.ngan_sach, 0);
   const totalCP = filtered.reduce((s, r) => s + r.chi_phi, 0);
 
@@ -89,12 +94,6 @@ export default function ExportPage() {
       setError('Không có chương trình nào có file PDF trong kết quả đang lọc');
       return;
     }
-    if (withPdf.length > 30) {
-      const ok = window.confirm(
-        'Có ' + withPdf.length + ' file PDF, việc tải có thể mất vài phút. Tiếp tục?'
-      );
-      if (!ok) return;
-    }
 
     cancelRef.current = false;
     setZipping(true);
@@ -102,23 +101,56 @@ export default function ExportPage() {
     let added = 0;
 
     try {
+      setProgress('Đang lấy danh sách file...');
+      const all = await api('listAllFiles');
+      const byProg = {};
+      all.forEach((f) => {
+        const k = String(f.so_thong_bao).trim().toLowerCase();
+        (byProg[k] = byProg[k] || []).push(f);
+      });
+
+      const jobs = [];
+      withPdf.forEach((p) => {
+        (byProg[String(p.so_thong_bao).trim().toLowerCase()] || []).forEach((f) => {
+          jobs.push({ p: p, f: f });
+        });
+      });
+
+      if (jobs.length === 0) {
+        setError('Không tìm thấy file PDF nào để tải');
+        return;
+      }
+
+      const totalBytes = jobs.reduce((s, j) => s + j.f.kich_thuoc, 0);
+      if (totalBytes > 100 * 1024 * 1024) {
+        const ok = window.confirm(
+          'Tổng dung lượng khoảng ' + formatSize(totalBytes) + ' (' + jobs.length + ' file), có thể mất vài phút và tốn bộ nhớ. Tiếp tục?'
+        );
+        if (!ok) return;
+      }
+
       const JSZip = (await import('jszip')).default;
       const zip = new JSZip();
       const used = {};
 
-      for (let i = 0; i < withPdf.length; i++) {
+      for (let i = 0; i < jobs.length; i++) {
         if (cancelRef.current) break;
-        const r = withPdf[i];
-        setProgress('Đang tải ' + (i + 1) + '/' + withPdf.length + ': ' + r.so_thong_bao);
+        const job = jobs[i];
+        const label = job.p.so_thong_bao + ' - ' + job.f.ten_hien_thi;
+        setProgress('Đang tải file ' + (i + 1) + '/' + jobs.length + ': ' + label);
         try {
-          const d = await api('getPdf', { id: r.so_thong_bao });
-          let name = d.file_name || r.so_thong_bao + '.pdf';
-          if (used[name]) name = (i + 1) + '_' + name;
-          used[name] = true;
-          zip.file(name, d.base64, { base64: true });
+          const got = await getPdfBlob(job.f.file_id, (pc) =>
+            setProgress('Đang tải file ' + (i + 1) + '/' + jobs.length + ' (' + pc + '%): ' + label)
+          );
+          const folder = safe(job.p.so_thong_bao);
+          const name = safe(job.f.loai_tai_lieu) + ' - ' + safe(job.f.ten_hien_thi) + '.pdf';
+          let path = folder + '/' + name;
+          if (used[path]) path = folder + '/' + (i + 1) + '_' + name;
+          used[path] = true;
+          zip.file(path, got.blob);
           added++;
         } catch (e) {
-          failed.push(r.so_thong_bao);
+          failed.push(label);
         }
       }
 
@@ -133,15 +165,15 @@ export default function ExportPage() {
         downloadBlob(blob, 'pdf_ctkm_' + tag + '.zip');
         setMsg(
           'Đã tải gói ' + added + ' file PDF' +
-            (failed.length > 0 ? '. Không tải được: ' + failed.join(', ') : '')
+            (failed.length > 0 ? '. Không tải được: ' + failed.join('; ') : '')
         );
       }
     } catch (e) {
       setError('Lỗi khi tạo gói PDF: ' + e.message);
+    } finally {
+      setProgress('');
+      setZipping(false);
     }
-
-    setProgress('');
-    setZipping(false);
   }
 
   return (
@@ -162,12 +194,7 @@ export default function ExportPage() {
           </div>
           <div>
             <label htmlFor="month">Tháng chạy</label>
-            <input
-              id="month"
-              type="month"
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
-            />
+            <input id="month" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
           </div>
           <div>
             <label htmlFor="status">Trạng thái</label>
@@ -193,12 +220,8 @@ export default function ExportPage() {
           </div>
           <div>
             <label>
-              <input
-                type="checkbox"
-                checked={onlyPdf}
-                onChange={(e) => setOnlyPdf(e.target.checked)}
-              />{' '}
-              Chỉ chương trình có PDF
+              <input type="checkbox" checked={onlyPdf} onChange={(e) => setOnlyPdf(e.target.checked)} /> Chỉ chương
+              trình có PDF
             </label>
           </div>
           <div>
@@ -218,8 +241,8 @@ export default function ExportPage() {
           <div className="stat-value">{filtered.length} chương trình</div>
         </div>
         <div className="stat">
-          <div className="stat-label">Có file PDF</div>
-          <div className="stat-value">{withPdf.length}</div>
+          <div className="stat-label">Tổng số file PDF</div>
+          <div className="stat-value">{totalFiles}</div>
         </div>
         <div className="stat">
           <div className="stat-label">Tổng ngân sách A&P</div>
@@ -232,19 +255,11 @@ export default function ExportPage() {
       </div>
 
       <div className="row" style={{ marginBottom: 14 }}>
-        <button
-          className="btn btn-primary"
-          onClick={onExportCSV}
-          disabled={filtered.length === 0 || zipping}
-        >
+        <button className="btn btn-primary" onClick={onExportCSV} disabled={filtered.length === 0 || zipping}>
           Xuất danh sách ra Excel
         </button>
-        <button
-          className="btn btn-primary"
-          onClick={onZip}
-          disabled={withPdf.length === 0 || zipping}
-        >
-          Tải gói PDF scan (ZIP, {withPdf.length} file)
+        <button className="btn btn-primary" onClick={onZip} disabled={withPdf.length === 0 || zipping}>
+          Tải gói PDF scan (ZIP, {totalFiles} file)
         </button>
         {zipping && (
           <>
@@ -284,9 +299,7 @@ export default function ExportPage() {
               {filtered.map((r) => (
                 <tr key={r.so_thong_bao}>
                   <td>
-                    <Link href={'/program?id=' + encodeURIComponent(r.so_thong_bao)}>
-                      {r.so_thong_bao}
-                    </Link>
+                    <Link href={'/program?id=' + encodeURIComponent(r.so_thong_bao)}>{r.so_thong_bao}</Link>
                   </td>
                   <td>{r.ten}</td>
                   <td>{r.hinh_thuc}</td>
@@ -312,7 +325,7 @@ export default function ExportPage() {
                       {r.canh_bao !== 'binh_thuong' && <WarnBadge level={r.canh_bao} />}
                     </div>
                   </td>
-                  <td>{r.co_pdf ? '📄' : <span className="muted">-</span>}</td>
+                  <td>{r.so_pdf > 0 ? '📄 ' + r.so_pdf : <span className="muted">-</span>}</td>
                 </tr>
               ))}
             </tbody>
