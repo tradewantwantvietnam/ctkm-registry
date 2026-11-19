@@ -15,6 +15,9 @@ const ALLOWED = [
   'uploadPdf',
   'getPdf',
   'delete',
+  'listTypes',
+  'addType',
+  'renameType',
 ];
 
 function fail(message, status) {
