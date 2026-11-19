@@ -3,10 +3,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
-import { formatVND, formatDate, monthOf, HINH_THUC_OPTIONS } from '@/lib/format';
+import { formatVND, formatDate, monthOf, TRE_NGAY } from '@/lib/format';
 import { WarnBadge, StatusBadge, Progress } from '@/components/Badges';
 
 const STATUS_OPTIONS = ['Chưa chạy', 'Đang chạy', 'Đã kết thúc', 'Đã quyết toán'];
+
+function isTre(r) {
+  return r.so_ngay_tre >= TRE_NGAY;
+}
 
 export default function HomePage() {
   const [rows, setRows] = useState([]);
@@ -32,14 +36,14 @@ export default function HomePage() {
   }, []);
 
   const hinhOptions = useMemo(() => {
-    const set = new Set(HINH_THUC_OPTIONS);
+    const set = new Set();
     rows.forEach((r) => {
       if (r.hinh_thuc) set.add(r.hinh_thuc);
     });
     return Array.from(set);
   }, [rows]);
 
-  // Lọc theo các điều kiện (chưa tính lọc cảnh báo, để đếm số liệu cho 2 ô cảnh báo)
+  // Lọc theo các điều kiện (chưa tính lọc cảnh báo, để đếm số liệu cho các ô cảnh báo)
   const base = useMemo(() => {
     const kw = q.trim().toLowerCase();
     return rows.filter((r) => {
@@ -56,15 +60,17 @@ export default function HomePage() {
     });
   }, [rows, q, month, status, hinh]);
 
-  const filtered = useMemo(
-    () => (warn ? base.filter((r) => r.canh_bao === warn) : base),
-    [base, warn]
-  );
+  const filtered = useMemo(() => {
+    if (!warn) return base;
+    if (warn === 'tre') return base.filter(isTre);
+    return base.filter((r) => r.canh_bao === warn);
+  }, [base, warn]);
 
   const totalNS = filtered.reduce((s, r) => s + r.ngan_sach, 0);
   const totalCP = filtered.reduce((s, r) => s + r.chi_phi, 0);
   const nSap = base.filter((r) => r.canh_bao === 'sap_vuot').length;
   const nVuot = base.filter((r) => r.canh_bao === 'vuot').length;
+  const nTre = base.filter(isTre).length;
 
   function toggleWarn(level) {
     setWarn((w) => (w === level ? '' : level));
@@ -82,9 +88,14 @@ export default function HomePage() {
     <div>
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
         <h1 style={{ margin: 0 }}>Danh sách chương trình khuyến mãi</h1>
-        <Link href="/new" className="btn btn-primary">
-          + Thêm chương trình
-        </Link>
+        <div className="row">
+          <Link href="/import" className="btn">
+            Nhập từ Excel
+          </Link>
+          <Link href="/new" className="btn btn-primary">
+            + Thêm chương trình
+          </Link>
+        </div>
       </div>
 
       {error && <div className="alert alert-error">Lỗi: {error}</div>}
@@ -117,10 +128,18 @@ export default function HomePage() {
           onClick={() => toggleWarn('vuot')}
           title="Bấm để lọc"
         >
-          <div className="stat-label">
-            Vượt ngân sách {warn === 'vuot' ? '- đang lọc' : ''}
-          </div>
+          <div className="stat-label">Vượt ngân sách {warn === 'vuot' ? '- đang lọc' : ''}</div>
           <div className="stat-value">{nVuot} chương trình</div>
+        </div>
+        <div
+          className={'stat clickable' + (nTre > 0 ? ' warn' : '')}
+          onClick={() => toggleWarn('tre')}
+          title="Bấm để lọc"
+        >
+          <div className="stat-label">
+            Quá hạn quyết toán (hơn {TRE_NGAY} ngày) {warn === 'tre' ? '- đang lọc' : ''}
+          </div>
+          <div className="stat-value">{nTre} chương trình</div>
         </div>
       </div>
 
@@ -138,12 +157,7 @@ export default function HomePage() {
           </div>
           <div>
             <label htmlFor="month">Tháng chạy</label>
-            <input
-              id="month"
-              type="month"
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
-            />
+            <input id="month" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
           </div>
           <div>
             <label htmlFor="status">Trạng thái</label>
@@ -208,9 +222,7 @@ export default function HomePage() {
                 return (
                   <tr key={r.so_thong_bao} className={rowCls}>
                     <td>
-                      <Link href={'/program?id=' + encodeURIComponent(r.so_thong_bao)}>
-                        {r.so_thong_bao}
-                      </Link>
+                      <Link href={'/program?id=' + encodeURIComponent(r.so_thong_bao)}>{r.so_thong_bao}</Link>
                     </td>
                     <td>{r.ten}</td>
                     <td>{r.hinh_thuc}</td>
@@ -231,19 +243,18 @@ export default function HomePage() {
                       )}
                     </td>
                     <td>
-                      {hasCost ? (
-                        <Progress ratio={r.ty_le} level={r.canh_bao} />
-                      ) : (
-                        <span className="muted">-</span>
-                      )}
+                      {hasCost ? <Progress ratio={r.ty_le} level={r.canh_bao} /> : <span className="muted">-</span>}
                     </td>
                     <td>
                       <div className="row" style={{ gap: 4 }}>
                         <StatusBadge status={r.trang_thai} />
                         {r.canh_bao !== 'binh_thuong' && <WarnBadge level={r.canh_bao} />}
+                        {isTre(r) && (
+                          <span className="badge badge-warn">Quá hạn QT {r.so_ngay_tre} ngày</span>
+                        )}
                       </div>
                     </td>
-                    <td>{r.co_pdf ? '📄' : <span className="muted">-</span>}</td>
+                    <td>{r.so_pdf > 0 ? '📄 ' + r.so_pdf : <span className="muted">-</span>}</td>
                   </tr>
                 );
               })}
