@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { api, openPdf, downloadPdf, fileToBase64, MAX_PDF_MB } from '@/lib/api';
+import { api } from '@/lib/api';
 import {
   formatVND,
   formatDate,
@@ -14,6 +14,7 @@ import {
 } from '@/lib/format';
 import { WarnBadge, StatusBadge, Progress } from '@/components/Badges';
 import MoneyInput from '@/components/MoneyInput';
+import FileManager from '@/components/FileManager';
 
 function Detail() {
   const sp = useSearchParams();
@@ -27,13 +28,9 @@ function Detail() {
   const [msg, setMsg] = useState('');
   const [cost, setCost] = useState({ chi_phi: '', loai: LOAI_TAM, ghi_chu: '' });
   const [saving, setSaving] = useState(false);
-  const [pdfBusy, setPdfBusy] = useState(false);
 
   async function load() {
-    const [prog, lg] = await Promise.all([
-      api('get', { id }),
-      api('costLog', { id }),
-    ]);
+    const [prog, lg] = await Promise.all([api('get', { id }), api('costLog', { id })]);
     setP(prog);
     setLog(lg);
     setCost({
@@ -68,7 +65,9 @@ function Detail() {
       return setError('Chương trình đã chốt quyết toán. Muốn sửa phải ghi lý do vào ô ghi chú.');
     }
     if (cost.loai === LOAI_CHOT) {
-      const ok = window.confirm('Chốt quyết toán chương trình này với số tiền ' + formatVND(cost.chi_phi) + ' đ?');
+      const ok = window.confirm(
+        'Chốt quyết toán chương trình này với số tiền ' + formatVND(cost.chi_phi) + ' đ?'
+      );
       if (!ok) return;
     }
 
@@ -90,55 +89,6 @@ function Detail() {
     setSaving(false);
   }
 
-  async function onPickPdf(e) {
-    const f = e.target.files && e.target.files[0];
-    e.target.value = '';
-    if (!f) return;
-    setMsg('');
-    setError('');
-
-    const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
-    if (!isPdf) return setError('Chỉ nhận file PDF');
-    if (f.size > MAX_PDF_MB * 1024 * 1024) {
-      return setError('File quá lớn (tối đa ' + MAX_PDF_MB + 'MB). Hãy nén PDF rồi chọn lại.');
-    }
-
-    setPdfBusy(true);
-    try {
-      const b64 = await fileToBase64(f);
-      await api('uploadPdf', {
-        data: { so_thong_bao: p.so_thong_bao, file_name: f.name, base64: b64 },
-      });
-      await load();
-      setMsg('Đã tải PDF lên');
-    } catch (err) {
-      setError(err.message);
-    }
-    setPdfBusy(false);
-  }
-
-  async function onOpenPdf() {
-    setError('');
-    setPdfBusy(true);
-    try {
-      await openPdf(p.so_thong_bao);
-    } catch (err) {
-      setError(err.message);
-    }
-    setPdfBusy(false);
-  }
-
-  async function onDownloadPdf() {
-    setError('');
-    setPdfBusy(true);
-    try {
-      await downloadPdf(p.so_thong_bao);
-    } catch (err) {
-      setError(err.message);
-    }
-    setPdfBusy(false);
-  }
-
   async function onDelete() {
     const ok = window.confirm(
       'Ẩn chương trình ' + p.so_thong_bao + ' khỏi danh sách? (Dữ liệu vẫn được giữ trong Google Sheet)'
@@ -153,7 +103,9 @@ function Detail() {
   }
 
   if (loading) return <div className="muted">Đang tải...</div>;
-  if (!p) return <div className="alert alert-error">Lỗi: {error || 'Không tải được chương trình'}</div>;
+  if (!p) {
+    return <div className="alert alert-error">Lỗi: {error || 'Không tải được chương trình'}</div>;
+  }
 
   const locked = p.loai_chi_phi === LOAI_CHOT;
   const hasCost = !!p.loai_chi_phi;
@@ -181,7 +133,7 @@ function Detail() {
 
       {notice === 'pdf_fail' && (
         <div className="alert alert-warn">
-          Đã lưu chương trình nhưng chưa tải được file PDF (file quá lớn hoặc lỗi mạng). Hãy tải lại PDF ở mục "File PDF scan" bên dưới.
+          Đã lưu chương trình nhưng chưa tải được file PDF. Hãy tải lại ở mục "Tài liệu PDF scan" bên dưới.
         </div>
       )}
       {error && <div className="alert alert-error">{error}</div>}
@@ -194,7 +146,13 @@ function Detail() {
       )}
       {p.canh_bao === 'sap_vuot' && (
         <div className="alert alert-warn">
-          <b>SẮP VƯỢT NGÂN SÁCH:</b> chi phí đã dùng {formatPercent(p.ty_le)} ngân sách, còn lại {formatVND(p.ngan_sach - p.chi_phi)} đ.
+          <b>SẮP VƯỢT NGÂN SÁCH:</b> chi phí đã dùng {formatPercent(p.ty_le)} ngân sách, còn lại{' '}
+          {formatVND(p.ngan_sach - p.chi_phi)} đ.
+        </div>
+      )}
+      {p.so_ngay_tre > 0 && (
+        <div className="alert alert-warn">
+          <b>CHƯA QUYẾT TOÁN:</b> chương trình đã kết thúc {p.so_ngay_tre} ngày nhưng chưa chốt chi phí.
         </div>
       )}
 
@@ -233,7 +191,8 @@ function Detail() {
             <div>
               {hasCost ? (
                 <span>
-                  <b>{formatVND(p.chi_phi)} đ</b> ({p.loai_chi_phi}, cập nhật {formatDateTime(p.ngay_cap_nhat_chi_phi)})
+                  <b>{formatVND(p.chi_phi)} đ</b> ({p.loai_chi_phi}, cập nhật{' '}
+                  {formatDateTime(p.ngay_cap_nhat_chi_phi)})
                 </span>
               ) : (
                 <span className="muted">Chưa có</span>
@@ -318,36 +277,7 @@ function Detail() {
         </form>
       </div>
 
-      <div className="card">
-        <h2>File PDF scan</h2>
-        <div className="row">
-          {p.co_pdf ? (
-            <>
-              <button className="btn btn-primary" onClick={onOpenPdf} disabled={pdfBusy}>
-                Xem PDF
-              </button>
-              <button className="btn" onClick={onDownloadPdf} disabled={pdfBusy}>
-                Tải PDF về máy
-              </button>
-            </>
-          ) : (
-            <span className="muted">Chưa có file PDF</span>
-          )}
-        </div>
-        <div style={{ marginTop: 12 }}>
-          <label htmlFor="pdf">{p.co_pdf ? 'Thay bằng file PDF khác' : 'Tải file PDF lên'}</label>
-          <input
-            id="pdf"
-            type="file"
-            accept="application/pdf,.pdf"
-            onChange={onPickPdf}
-            disabled={pdfBusy}
-          />
-          <div className="hint">
-            Tối đa {MAX_PDF_MB}MB. {pdfBusy ? 'Đang xử lý, vui lòng chờ...' : ''}
-          </div>
-        </div>
-      </div>
+      <FileManager soThongBao={p.so_thong_bao} />
 
       <div className="card">
         <h2>Lịch sử nhập chi phí</h2>
