@@ -12,12 +12,19 @@ const ALLOWED = [
   'update',
   'updateCost',
   'costLog',
-  'uploadPdf',
-  'getPdf',
   'delete',
   'listTypes',
   'addType',
   'renameType',
+  'listFiles',
+  'listAllFiles',
+  'uploadPdf',
+  'uploadStart',
+  'uploadChunk',
+  'updateFile',
+  'deleteFile',
+  'getFileChunk',
+  'importPrograms',
 ];
 
 function fail(message, status) {
@@ -25,7 +32,6 @@ function fail(message, status) {
 }
 
 export async function POST(req) {
-  // Kiểm tra đăng nhập thêm một lần nữa ngay tại đây
   const token = cookies().get(COOKIE_NAME)?.value;
   const expected = await makeToken();
   if (!token || !expected || token !== expected) {
