@@ -327,4 +327,88 @@ export default function ProgramForm({ initial, isEdit }) {
               </div>
             </div>
           </div>
-        )
+        )}
+
+        <div className="full">
+          <label htmlFor="ten">Tên chương trình *</label>
+          <input
+            id="ten"
+            type="text"
+            value={form.ten}
+            onChange={(e) => set('ten', e.target.value)}
+          />
+        </div>
+
+        <div>
+          <label htmlFor="ngay_bd">Ngày bắt đầu *</label>
+          <input
+            id="ngay_bd"
+            type="date"
+            value={form.ngay_bd}
+            onChange={(e) => set('ngay_bd', e.target.value)}
+          />
+        </div>
+
+        <div>
+          <label htmlFor="ngay_kt">Ngày kết thúc *</label>
+          <input
+            id="ngay_kt"
+            type="date"
+            value={form.ngay_kt}
+            onChange={(e) => set('ngay_kt', e.target.value)}
+          />
+        </div>
+
+        <div>
+          <label htmlFor="ngan_sach">Ngân sách dự kiến theo A&P (đồng) *</label>
+          <MoneyInput
+            id="ngan_sach"
+            value={form.ngan_sach}
+            onChange={(v) => set('ngan_sach', v)}
+          />
+        </div>
+
+        <div>
+          <label htmlFor="ghi_chu">Ghi chú</label>
+          <input
+            id="ghi_chu"
+            type="text"
+            value={form.ghi_chu}
+            onChange={(e) => set('ghi_chu', e.target.value)}
+          />
+        </div>
+
+        <div className="full">
+          <label htmlFor="noi_dung">Nội dung cơ bản của chương trình</label>
+          <textarea
+            id="noi_dung"
+            value={form.noi_dung}
+            onChange={(e) => set('noi_dung', e.target.value)}
+          />
+        </div>
+
+        {!isEdit && (
+          <div className="full">
+            <label htmlFor="pdf">File PDF scan (không bắt buộc, có thể tải sau)</label>
+            <input id="pdf" type="file" accept="application/pdf,.pdf" onChange={onPickFile} />
+            <div className="hint">Tối đa {MAX_PDF_MB}MB. Nếu scan nặng hơn, hãy nén PDF trước.</div>
+          </div>
+        )}
+      </div>
+
+      <div className="row" style={{ marginTop: 16 }}>
+        <button className="btn btn-primary" type="submit" disabled={saving}>
+          {saving ? 'Đang lưu...' : isEdit ? 'Lưu thay đổi' : 'Lưu chương trình'}
+        </button>
+        <button
+          className="btn"
+          type="button"
+          disabled={saving}
+          onClick={() => router.back()}
+        >
+          Hủy
+        </button>
+      </div>
+    </form>
+  );
+}
