@@ -5,28 +5,6 @@ import { makeToken, COOKIE_NAME } from '@/lib/auth';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const ALLOWED = [
-  'list',
-  'get',
-  'create',
-  'update',
-  'updateCost',
-  'costLog',
-  'delete',
-  'listTypes',
-  'addType',
-  'renameType',
-  'listFiles',
-  'listAllFiles',
-  'uploadPdf',
-  'uploadStart',
-  'uploadChunk',
-  'updateFile',
-  'deleteFile',
-  'getFileChunk',
-  'importPrograms',
-];
-
 function fail(message, status) {
   return NextResponse.json({ ok: false, error: message }, { status: status });
 }
@@ -51,7 +29,7 @@ export async function POST(req) {
     return fail('Dữ liệu gửi lên không hợp lệ', 400);
   }
 
-  if (!ALLOWED.includes(body.action)) {
+  if (typeof body.action !== 'string' || !/^[A-Za-z][A-Za-z0-9]{1,40}$/.test(body.action)) {
     return fail('Action không hợp lệ', 400);
   }
 
