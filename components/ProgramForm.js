@@ -1,9 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, fileToBase64, MAX_PDF_MB } from '@/lib/api';
-import { HINH_THUC_OPTIONS } from '@/lib/format';
 import MoneyInput from '@/components/MoneyInput';
 
 export default function ProgramForm({ initial, isEdit }) {
@@ -23,14 +22,85 @@ export default function ProgramForm({ initial, isEdit }) {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Quản lý hình thức khuyến mãi
+  const [types, setTypes] = useState([]);
+  const [showMgr, setShowMgr] = useState(false);
+  const [newType, setNewType] = useState('');
+  const [editing, setEditing] = useState(null); // { old: '...', value: '...' }
+  const [mgrBusy, setMgrBusy] = useState(false);
+  const [mgrMsg, setMgrMsg] = useState('');
+  const [mgrErr, setMgrErr] = useState('');
+
   function set(name, value) {
     setForm((f) => ({ ...f, [name]: value }));
   }
 
+  useEffect(() => {
+    api('listTypes')
+      .then((list) => setTypes(list))
+      .catch((e) => setMgrErr('Không tải được danh sách hình thức: ' + e.message));
+  }, []);
+
   const hinhOptions =
-    !form.hinh_thuc || HINH_THUC_OPTIONS.includes(form.hinh_thuc)
-      ? HINH_THUC_OPTIONS
-      : [form.hinh_thuc, ...HINH_THUC_OPTIONS];
+    !form.hinh_thuc || types.includes(form.hinh_thuc)
+      ? types
+      : [form.hinh_thuc, ...types];
+
+  async function addType() {
+    setMgrErr('');
+    setMgrMsg('');
+    const name = newType.trim();
+    if (!name) {
+      setMgrErr('Chưa nhập tên hình thức');
+      return;
+    }
+    setMgrBusy(true);
+    try {
+      const list = await api('addType', { data: { ten: name } });
+      setTypes(list);
+      const found = list.find((t) => t.toLowerCase() === name.toLowerCase());
+      set('hinh_thuc', found || name);
+      setNewType('');
+      setMgrMsg('Đã thêm hình thức "' + name + '" và chọn cho chương trình này');
+    } catch (e) {
+      setMgrErr(e.message);
+    }
+    setMgrBusy(false);
+  }
+
+  async function saveRename() {
+    if (!editing) return;
+    setMgrErr('');
+    setMgrMsg('');
+    const oldName = editing.old;
+    const newName = editing.value.trim();
+    if (!newName) {
+      setMgrErr('Chưa nhập tên mới');
+      return;
+    }
+    if (newName === oldName) {
+      setEditing(null);
+      return;
+    }
+    const ok = window.confirm(
+      'Đổi tên hình thức "' + oldName + '" thành "' + newName + '"?\n\nTất cả chương trình đang dùng hình thức này sẽ đổi theo.'
+    );
+    if (!ok) return;
+
+    setMgrBusy(true);
+    try {
+      const list = await api('renameType', {
+        data: { ten_cu: oldName, ten_moi: newName },
+      });
+      setTypes(list);
+      if (form.hinh_thuc === oldName) set('hinh_thuc', newName);
+      setEditing(null);
+      setMgrMsg('Đã đổi tên thành "' + newName + '"');
+    } catch (e) {
+      setMgrErr(e.message);
+    }
+    setMgrBusy(false);
+  }
 
   function onPickFile(e) {
     const f = e.target.files && e.target.files[0];
@@ -134,88 +204,127 @@ export default function ProgramForm({ initial, isEdit }) {
               </option>
             ))}
           </select>
-        </div>
-
-        <div className="full">
-          <label htmlFor="ten">Tên chương trình *</label>
-          <input
-            id="ten"
-            type="text"
-            value={form.ten}
-            onChange={(e) => set('ten', e.target.value)}
-          />
-        </div>
-
-        <div>
-          <label htmlFor="ngay_bd">Ngày bắt đầu *</label>
-          <input
-            id="ngay_bd"
-            type="date"
-            value={form.ngay_bd}
-            onChange={(e) => set('ngay_bd', e.target.value)}
-          />
-        </div>
-
-        <div>
-          <label htmlFor="ngay_kt">Ngày kết thúc *</label>
-          <input
-            id="ngay_kt"
-            type="date"
-            value={form.ngay_kt}
-            onChange={(e) => set('ngay_kt', e.target.value)}
-          />
-        </div>
-
-        <div>
-          <label htmlFor="ngan_sach">Ngân sách dự kiến theo A&P (đồng) *</label>
-          <MoneyInput
-            id="ngan_sach"
-            value={form.ngan_sach}
-            onChange={(v) => set('ngan_sach', v)}
-          />
-        </div>
-
-        <div>
-          <label htmlFor="ghi_chu">Ghi chú</label>
-          <input
-            id="ghi_chu"
-            type="text"
-            value={form.ghi_chu}
-            onChange={(e) => set('ghi_chu', e.target.value)}
-          />
-        </div>
-
-        <div className="full">
-          <label htmlFor="noi_dung">Nội dung cơ bản của chương trình</label>
-          <textarea
-            id="noi_dung"
-            value={form.noi_dung}
-            onChange={(e) => set('noi_dung', e.target.value)}
-          />
-        </div>
-
-        {!isEdit && (
-          <div className="full">
-            <label htmlFor="pdf">File PDF scan (không bắt buộc, có thể tải sau)</label>
-            <input id="pdf" type="file" accept="application/pdf,.pdf" onChange={onPickFile} />
-            <div className="hint">Tối đa {MAX_PDF_MB}MB. Nếu scan nặng hơn, hãy nén PDF trước.</div>
+          <div style={{ marginTop: 4 }}>
+            <button
+              type="button"
+              className="btn btn-small"
+              onClick={() => {
+                setShowMgr((v) => !v);
+                setMgrErr('');
+                setMgrMsg('');
+                setEditing(null);
+              }}
+            >
+              {showMgr ? 'Đóng quản lý hình thức' : 'Thêm / đổi tên hình thức'}
+            </button>
           </div>
-        )}
-      </div>
+        </div>
 
-      <div className="row" style={{ marginTop: 16 }}>
-        <button className="btn btn-primary" type="submit" disabled={saving}>
-          {saving ? 'Đang lưu...' : isEdit ? 'Lưu thay đổi' : 'Lưu chương trình'}
-        </button>
-        <button
-          className="btn"
-          type="button"
-          disabled={saving}
-          onClick={() => router.back()}
-        >
-          Hủy
-        </button>
-      </div>
-    </form>
-  );
-}
+        {showMgr && (
+          <div className="full">
+            <div
+              style={{
+                border: '1px solid #bfdbfe',
+                background: '#eff6ff',
+                borderRadius: 8,
+                padding: 12,
+              }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>Quản lý hình thức khuyến mãi</div>
+
+              {mgrErr && <div className="alert alert-error">{mgrErr}</div>}
+              {mgrMsg && <div className="alert alert-ok">{mgrMsg}</div>}
+
+              <label htmlFor="new_type">Thêm hình thức mới</label>
+              <div className="row" style={{ marginBottom: 14 }}>
+                <input
+                  id="new_type"
+                  type="text"
+                  style={{ flex: 1, minWidth: 200 }}
+                  placeholder="Ví dụ: Tích điểm đổi quà"
+                  value={newType}
+                  onChange={(e) => setNewType(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      if (!mgrBusy) addType();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={mgrBusy || !newType.trim()}
+                  onClick={addType}
+                >
+                  Thêm
+                </button>
+              </div>
+
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Các hình thức hiện có</div>
+              {types.length === 0 && <div className="muted">Chưa có hình thức nào</div>}
+              {types.map((t) => (
+                <div
+                  key={t}
+                  className="row"
+                  style={{ marginBottom: 6, justifyContent: 'space-between' }}
+                >
+                  {editing && editing.old === t ? (
+                    <>
+                      <input
+                        type="text"
+                        style={{ flex: 1, minWidth: 200 }}
+                        value={editing.value}
+                        autoFocus
+                        onChange={(e) => setEditing({ old: t, value: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (!mgrBusy) saveRename();
+                          }
+                        }}
+                      />
+                      <div className="row" style={{ gap: 6 }}>
+                        <button
+                          type="button"
+                          className="btn btn-small btn-primary"
+                          disabled={mgrBusy}
+                          onClick={saveRename}
+                        >
+                          Lưu tên mới
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-small"
+                          disabled={mgrBusy}
+                          onClick={() => setEditing(null)}
+                        >
+                          Hủy
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <span>{t}</span>
+                      <button
+                        type="button"
+                        className="btn btn-small"
+                        disabled={mgrBusy}
+                        onClick={() => {
+                          setMgrErr('');
+                          setMgrMsg('');
+                          setEditing({ old: t, value: t });
+                        }}
+                      >
+                        Đổi tên
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+              <div className="hint">
+                Đổi tên sẽ áp dụng cho tất cả chương trình đang dùng hình thức đó.
+              </div>
+            </div>
+          </div>
+        )
