@@ -15,6 +15,7 @@ import {
 } from '@/lib/format';
 import { WarnBadge, StatusBadge, Progress } from '@/components/Badges';
 import CostEntry from '@/components/CostEntry';
+import AdjustmentPanel from '@/components/AdjustmentPanel';
 import FileManager from '@/components/FileManager';
 
 function Detail() {
@@ -51,7 +52,7 @@ function Detail() {
   async function onDelete() {
     const p = detail.program;
     const ok = window.confirm(
-      'Ẩn chương trình ' + p.so_thong_bao + ' khỏi danh sách? (Dữ liệu vẫn được giữ, có thể khôi phục sau)'
+      'Ẩn chương trình ' + p.so_thong_bao + ' khỏi danh sách? (Dữ liệu vẫn được giữ, có thể khôi phục ở mục "Đã ẩn")'
     );
     if (!ok) return;
     try {
@@ -314,6 +315,8 @@ function Detail() {
         )}
       </div>
 
+      <AdjustmentPanel detail={detail} refs={refs} onSaved={load} />
+
       <CostEntry detail={detail} refs={refs} onSaved={load} />
 
       <FileManager soThongBao={p.so_thong_bao} />
@@ -341,7 +344,11 @@ function Detail() {
                     <td style={{ whiteSpace: 'nowrap' }}>{formatDateTime(g.ngay_nhap)}</td>
                     <td>
                       {g.kieu}
-                      {g.kieu === KIEU_BS && g.ly_do && <div className="muted" style={{ fontSize: 12 }}>{g.ly_do}</div>}
+                      {g.kieu === KIEU_BS && g.ly_do && (
+                        <div className="muted" style={{ fontSize: 12 }}>
+                          {g.ly_do}
+                        </div>
+                      )}
                     </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {formatDate(g.tu_ngay)} - {formatDate(g.den_ngay)}
