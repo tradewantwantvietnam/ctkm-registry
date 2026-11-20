@@ -8,6 +8,7 @@ const LINKS = [
   { href: '/new', label: 'Thêm chương trình' },
   { href: '/import', label: 'Nhập từ Excel' },
   { href: '/settle', label: 'Quyết toán' },
+  { href: '/monthly', label: 'Theo dõi tháng' },
   { href: '/alerts', label: 'Báo động' },
   { href: '/export', label: 'Trích lục' },
 ];
