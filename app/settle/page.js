@@ -1,15 +1,14 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import {
-  formatVND,
-  formatDate,
-  formatPercent,
-  monthOf,
   LOAI_TAM,
   LOAI_CHOT,
+  formatMonth,
+  formatVND,
+  formatPercent,
 } from '@/lib/format';
 import MoneyInput from '@/components/MoneyInput';
 
@@ -20,152 +19,167 @@ function prevMonth() {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
 }
 
+function lastDay(month) {
+  const y = Number(month.slice(0, 4));
+  const m = Number(month.slice(5, 7));
+  return month + '-' + String(new Date(y, m, 0).getDate()).padStart(2, '0');
+}
+
 function levelOf(cp, ns) {
-  if (cp === '' || cp === null || cp === undefined) return 'binh_thuong';
-  const v = Number(cp);
-  if (v > ns) return 'vuot';
-  if (ns > 0 && v / ns >= 0.8) return 'sap_vuot';
+  if (cp > 0 && cp > ns) return 'vuot';
+  if (ns > 0 && cp / ns >= 0.8) return 'sap_vuot';
   return 'binh_thuong';
 }
 
+const LV_COLOR = { vuot: '#b91c1c', sap_vuot: '#b45309', binh_thuong: undefined };
+const LV_TEXT = { vuot: ' - VƯỢT', sap_vuot: ' - Sắp vượt', binh_thuong: '' };
+
 export default function SettlePage() {
+  const [month, setMonth] = useState(prevMonth());
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
-  const [month, setMonth] = useState(prevMonth());
   const [showLocked, setShowLocked] = useState(false);
+  const [kieu, setKieu] = useState(LOAI_CHOT);
   const [inputs, setInputs] = useState({});
   const [saving, setSaving] = useState(false);
 
-  function buildInputs(list) {
-    const m = {};
-    list.forEach((r) => {
-      m[r.so_thong_bao] = {
-        cp: r.loai_chi_phi ? String(Math.round(r.chi_phi)) : '',
-        loai: LOAI_CHOT,
-      };
-    });
-    return m;
-  }
-
-  async function load() {
-    const list = await api('list');
-    setRows(list);
-    setInputs(buildInputs(list));
+  async function load(m) {
+    const r = await api('getMonth', { data: { thang: m } });
+    setRows(r);
+    setInputs({});
   }
 
   useEffect(() => {
-    load()
-      .then(() => setLoading(false))
+    if (!/^\d{4}-\d{2}$/.test(month)) return;
+    let alive = true;
+    setLoading(true);
+    setError('');
+    setMsg('');
+    api('getMonth', { data: { thang: month } })
+      .then((r) => {
+        if (!alive) return;
+        setRows(r);
+        setInputs({});
+        setLoading(false);
+      })
       .catch((e) => {
+        if (!alive) return;
+        setRows([]);
         setError(e.message);
         setLoading(false);
       });
-  }, []);
+    return () => {
+      alive = false;
+    };
+  }, [month]);
 
-  // Các chương trình có thời gian chạy giao với tháng đã chọn
-  const list = useMemo(() => {
-    return rows.filter((r) => {
-      if (!month) return true;
-      if (!(monthOf(r.ngay_bd) <= month && monthOf(r.ngay_kt) >= month)) return false;
-      if (!showLocked && r.loai_chi_phi === LOAI_CHOT) return false;
-      return true;
-    });
-  }, [rows, month, showLocked]);
+  const visible = rows.filter((p) => showLocked || !p.thang.da_chot);
 
-  function setInput(id, patch) {
-    setInputs((m) => ({ ...m, [id]: { ...m[id], ...patch } }));
+  // Thông tin một ô (chương trình p, vùng r)
+  function cell(p, r) {
+    const k = p.so_thong_bao + '|' + r.vung;
+    const orig = r.co_chi_phi ? String(Math.round(r.chi_phi)) : '';
+    const typed = inputs[k] !== undefined ? inputs[k] : orig;
+    let sent = '';
+    if (!r.da_chot && typed !== '') {
+      if (typed !== orig) sent = typed;
+      else if (kieu === LOAI_CHOT && orig !== '') sent = typed;
+    }
+    const value = typed === '' ? (r.da_chot ? r.chi_phi : 0) : Number(typed);
+    return { k, orig, typed, sent, locked: r.da_chot, value };
   }
 
-  // Các dòng có thay đổi so với dữ liệu đang lưu
-  function changedRows() {
-    return list.filter((r) => {
-      if (r.loai_chi_phi === LOAI_CHOT) return false; // đã chốt: sửa ở trang chi tiết
-      const inp = inputs[r.so_thong_bao];
-      if (!inp || inp.cp === '') return false;
-      const orig = r.loai_chi_phi ? String(Math.round(r.chi_phi)) : '';
-      return inp.cp !== orig || (r.loai_chi_phi && r.loai_chi_phi !== inp.loai);
-    });
+  function setInput(k, v) {
+    setInputs((s) => ({ ...s, [k]: v }));
   }
 
-  const changed = changedRows();
-  const nChot = changed.filter((r) => inputs[r.so_thong_bao].loai === LOAI_CHOT).length;
+  // Gom các khoản sẽ lưu
+  const entries = [];
+  let totalItems = 0;
+  visible.forEach((p) => {
+    const items = [];
+    p.thang.vung_ds.forEach((r) => {
+      const c = cell(p, r);
+      if (c.sent !== '') items.push({ thang: month, vung: r.vung, so_tien: Number(c.sent) });
+    });
+    if (items.length > 0) {
+      const tu = p.ngay_bd > month + '-01' ? p.ngay_bd : month + '-01';
+      const den = p.ngay_kt < lastDay(month) ? p.ngay_kt : lastDay(month);
+      entries.push({
+        so_thong_bao: p.so_thong_bao,
+        kieu: kieu,
+        tu_ngay: tu,
+        den_ngay: den,
+        ghi_chu: 'Quyết toán ' + formatMonth(month),
+        items: items,
+      });
+      totalItems += items.length;
+    }
+  });
+
+  const nChua = rows.filter((p) => !p.thang.da_chot).length;
+  const totalNS = visible.reduce((s, p) => s + p.thang.ngan_sach, 0);
 
   async function saveAll() {
     setError('');
     setMsg('');
-    if (changed.length === 0) {
-      setError('Chưa có dòng nào được nhập hoặc thay đổi');
+    if (entries.length === 0) {
+      setError('Chưa có ô nào được nhập hoặc thay đổi');
       return;
     }
-    const ok = window.confirm(
-      'Lưu chi phí cho ' + changed.length + ' chương trình?' +
-        (nChot > 0 ? '\n\nTrong đó ' + nChot + ' chương trình sẽ được CHỐT quyết toán.' : '')
-    );
-    if (!ok) return;
-
+    if (kieu === LOAI_CHOT) {
+      const ok = window.confirm(
+        'CHỐT quyết toán ' + formatMonth(month) + ' cho ' + totalItems + ' khoản của ' + entries.length + ' chương trình?'
+      );
+      if (!ok) return;
+    }
     setSaving(true);
-    const errors = [];
-    let done = 0;
-    for (const r of changed) {
-      const inp = inputs[r.so_thong_bao];
-      try {
-        await api('updateCost', {
-          data: {
-            so_thong_bao: r.so_thong_bao,
-            chi_phi: Number(inp.cp),
-            loai_chi_phi: inp.loai,
-            ghi_chu: '',
-          },
-        });
-        done++;
-      } catch (e) {
-        errors.push(r.so_thong_bao + ': ' + e.message);
-      }
-    }
-
     try {
-      await load();
+      await api('addCosts', { data: { entries: entries } });
+      await load(month);
+      setMsg('Đã lưu ' + totalItems + ' khoản của ' + entries.length + ' chương trình');
     } catch (e) {
-      errors.push('Không tải lại được dữ liệu: ' + e.message);
+      setError(e.message);
     }
-
-    if (done > 0) setMsg('Đã lưu ' + done + ' chương trình');
-    if (errors.length > 0) setError('Có lỗi ở: ' + errors.join(' | '));
     setSaving(false);
   }
 
+  const inlineLabel = { display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 400, marginBottom: 0 };
+
   return (
     <div>
-      <h1>Quyết toán chi phí khuyến mãi</h1>
+      <h1>Quyết toán chi phí theo tháng</h1>
 
       <div className="card">
         <div className="toolbar" style={{ marginBottom: 0 }}>
           <div>
             <label htmlFor="month">Tháng quyết toán</label>
-            <input
-              id="month"
-              type="month"
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
-            />
+            <input id="month" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
           </div>
           <div>
-            <label>
-              <input
-                type="checkbox"
-                checked={showLocked}
-                onChange={(e) => setShowLocked(e.target.checked)}
-              />{' '}
+            <label>Kiểu lưu</label>
+            <div className="row" style={{ gap: 14 }}>
+              {[LOAI_CHOT, LOAI_TAM].map((k) => (
+                <label key={k} style={inlineLabel}>
+                  <input type="radio" name="kieu" checked={kieu === k} onChange={() => setKieu(k)} />
+                  {k}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label style={inlineLabel}>
+              <input type="checkbox" checked={showLocked} onChange={(e) => setShowLocked(e.target.checked)} />
               Hiện cả chương trình đã chốt
             </label>
           </div>
         </div>
         <div className="hint" style={{ marginTop: 8 }}>
-          Hiện các chương trình có thời gian chạy rơi vào tháng đã chọn. Mặc định chọn tháng trước
-          để quyết toán đầu tháng. Nhập chi phí từng dòng, chọn "Tạm tính" hoặc "Chốt", rồi bấm
-          "Lưu tất cả" một lần.
+          Nhập số chi phí <b>lũy kế</b> của {formatMonth(month)} cho từng vùng. Kiểu <b>Chốt</b> sẽ chốt luôn các số tạm
+          tính đang hiện sẵn trong ô. Ô đã chốt bị khóa, muốn sửa thì vào trang chi tiết chương trình và ghi lý do. Chi
+          phí bổ sung (phát sinh thêm, chạy tiếp) nhập ở trang chi tiết.
         </div>
       </div>
 
@@ -176,103 +190,158 @@ export default function SettlePage() {
         <div className="muted">Đang tải dữ liệu...</div>
       ) : (
         <>
+          <div className="stats">
+            <div className="stat">
+              <div className="stat-label">Chương trình có ngân sách {formatMonth(month)}</div>
+              <div className="stat-value">{rows.length}</div>
+            </div>
+            <div className={'stat' + (nChua > 0 ? ' warn' : '')}>
+              <div className="stat-label">Chưa chốt</div>
+              <div className="stat-value">{nChua}</div>
+            </div>
+            <div className="stat">
+              <div className="stat-label">Tổng ngân sách (đang hiện)</div>
+              <div className="stat-value">{formatVND(totalNS)}</div>
+            </div>
+          </div>
+
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Số thông báo</th>
-                  <th>Tên chương trình</th>
-                  <th>Thời gian chạy</th>
-                  <th className="num">Ngân sách A&P</th>
-                  <th style={{ minWidth: 170 }}>Chi phí thực tế</th>
-                  <th style={{ minWidth: 120 }}>Loại</th>
+                  <th>Chương trình</th>
+                  <th>Vùng</th>
+                  <th className="num">Ngân sách tháng</th>
+                  <th className="num">Chi phí hiện có</th>
+                  <th style={{ minWidth: 190 }}>Chi phí lũy kế (nhập)</th>
                   <th>Tỷ lệ</th>
                 </tr>
               </thead>
               <tbody>
-                {list.length === 0 && (
+                {visible.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 24 }}>
-                      Không có chương trình nào cần quyết toán trong tháng này
+                    <td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 24 }}>
+                      Không có chương trình nào cần quyết toán trong {formatMonth(month)}
                     </td>
                   </tr>
                 )}
-                {list.map((r) => {
-                  const id = r.so_thong_bao;
-                  const inp = inputs[id] || { cp: '', loai: LOAI_CHOT };
-                  const locked = r.loai_chi_phi === LOAI_CHOT;
-                  const lv = levelOf(inp.cp, r.ngan_sach);
-                  const rowCls = lv === 'vuot' ? 'row-danger' : lv === 'sap_vuot' ? 'row-warn' : '';
-                  const ratio = r.ngan_sach > 0 && inp.cp !== '' ? Number(inp.cp) / r.ngan_sach : 0;
-                  return (
-                    <tr key={id} className={rowCls}>
+
+                {visible.map((p) => {
+                  const vd = p.thang.vung_ds;
+                  const single = vd.length === 1;
+
+                  const infos = vd.map((r) => ({ r, c: cell(p, r) }));
+                  const sentCount = infos.filter((x) => x.c.sent !== '').length;
+                  const missing = infos.filter((x) => !x.r.da_chot && x.c.sent === '').length;
+                  const sumNS = p.thang.ngan_sach;
+                  const sumNew = infos.reduce((s, x) => s + x.c.value, 0);
+                  const pLv = levelOf(sumNew, sumNS);
+
+                  const link = (
+                    <div>
+                      <Link href={'/program?id=' + encodeURIComponent(p.so_thong_bao)}>{p.so_thong_bao}</Link>
+                      <div>{p.ten}</div>
+                    </div>
+                  );
+
+                  function inputCell(x) {
+                    if (x.r.da_chot) {
+                      return (
+                        <div>
+                          <span className="badge badge-ok">Đã chốt</span> {formatVND(x.r.chi_phi)}
+                        </div>
+                      );
+                    }
+                    return (
+                      <MoneyInput
+                        value={x.c.typed}
+                        disabled={saving}
+                        onChange={(v) => setInput(x.c.k, v)}
+                      />
+                    );
+                  }
+
+                  function ratioCell(x) {
+                    if (x.c.typed === '' && !x.r.da_chot) return <span className="muted">-</span>;
+                    const ratio = x.r.ngan_sach > 0 ? x.c.value / x.r.ngan_sach : 0;
+                    const lv = levelOf(x.c.value, x.r.ngan_sach);
+                    return (
+                      <span style={{ fontWeight: 600, color: LV_COLOR[lv], whiteSpace: 'nowrap' }}>
+                        {formatPercent(ratio)}
+                        {LV_TEXT[lv]}
+                      </span>
+                    );
+                  }
+
+                  if (single) {
+                    const x = infos[0];
+                    const rowCls = pLv === 'vuot' ? 'row-danger' : pLv === 'sap_vuot' ? 'row-warn' : '';
+                    return (
+                      <tr key={p.so_thong_bao} className={rowCls}>
+                        <td>{link}</td>
+                        <td>{x.r.vung}</td>
+                        <td className="num">{formatVND(x.r.ngan_sach)}</td>
+                        <td className="num">
+                          {x.r.co_chi_phi ? formatVND(x.r.chi_phi) : <span className="muted">Chưa có</span>}
+                        </td>
+                        <td>{inputCell(x)}</td>
+                        <td>{ratioCell(x)}</td>
+                      </tr>
+                    );
+                  }
+
+                  return [
+                    <tr key={p.so_thong_bao} style={{ background: '#f3f4f6' }}>
+                      <td>{link}</td>
+                      <td className="muted">Tổng các vùng</td>
+                      <td className="num">{formatVND(sumNS)}</td>
+                      <td className="num">
+                        {p.thang.co_chi_phi ? formatVND(p.thang.chi_phi) : <span className="muted">Chưa có</span>}
+                      </td>
                       <td>
-                        <Link href={'/program?id=' + encodeURIComponent(id)}>{id}</Link>
-                      </td>
-                      <td>{r.ten}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        {formatDate(r.ngay_bd)} - {formatDate(r.ngay_kt)}
-                      </td>
-                      <td className="num">{formatVND(r.ngan_sach)}</td>
-                      <td>
-                        <MoneyInput
-                          value={inp.cp}
-                          disabled={locked || saving}
-                          onChange={(v) => setInput(id, { cp: v })}
-                        />
-                      </td>
-                      <td>
-                        {locked ? (
-                          <span className="badge badge-ok">Đã chốt</span>
-                        ) : (
-                          <select
-                            value={inp.loai}
-                            disabled={saving}
-                            onChange={(e) => setInput(id, { loai: e.target.value })}
-                          >
-                            <option value={LOAI_CHOT}>{LOAI_CHOT}</option>
-                            <option value={LOAI_TAM}>{LOAI_TAM}</option>
-                          </select>
-                        )}
-                      </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        {inp.cp === '' ? (
-                          <span className="muted">-</span>
-                        ) : (
-                          <span
-                            style={{
-                              fontWeight: 600,
-                              color: lv === 'vuot' ? '#b91c1c' : lv === 'sap_vuot' ? '#b45309' : undefined,
-                            }}
-                          >
-                            {formatPercent(ratio)}
-                            {lv === 'vuot' ? ' - VƯỢT' : lv === 'sap_vuot' ? ' - Sắp vượt' : ''}
+                        {kieu === LOAI_CHOT && sentCount > 0 && missing > 0 && (
+                          <span style={{ color: '#b45309', fontSize: 13 }}>
+                            Còn {missing} vùng chưa có số, tháng này chưa được tính là chốt
                           </span>
                         )}
-                        {locked && (
-                          <div className="hint">
-                            Sửa ở{' '}
-                            <Link href={'/program?id=' + encodeURIComponent(id)}>trang chi tiết</Link>
-                          </div>
-                        )}
                       </td>
-                    </tr>
-                  );
+                      <td>
+                        <span style={{ fontWeight: 600, color: LV_COLOR[pLv], whiteSpace: 'nowrap' }}>
+                          {sumNS > 0 ? formatPercent(sumNew / sumNS) : ''}
+                          {LV_TEXT[pLv]}
+                        </span>
+                      </td>
+                    </tr>,
+                    ...infos.map((x) => {
+                      const lv = levelOf(x.c.value, x.r.ngan_sach);
+                      const rowCls = lv === 'vuot' ? 'row-danger' : lv === 'sap_vuot' ? 'row-warn' : '';
+                      return (
+                        <tr key={p.so_thong_bao + '|' + x.r.vung} className={rowCls}>
+                          <td></td>
+                          <td style={{ paddingLeft: 24 }}>{x.r.vung}</td>
+                          <td className="num">{formatVND(x.r.ngan_sach)}</td>
+                          <td className="num">
+                            {x.r.co_chi_phi ? formatVND(x.r.chi_phi) : <span className="muted">-</span>}
+                          </td>
+                          <td>{inputCell(x)}</td>
+                          <td>{ratioCell(x)}</td>
+                        </tr>
+                      );
+                    }),
+                  ];
                 })}
               </tbody>
             </table>
           </div>
 
           <div className="row" style={{ marginTop: 14 }}>
-            <button
-              className="btn btn-primary"
-              onClick={saveAll}
-              disabled={saving || changed.length === 0}
-            >
-              {saving ? 'Đang lưu...' : 'Lưu tất cả (' + changed.length + ' dòng thay đổi)'}
+            <button className="btn btn-primary" onClick={saveAll} disabled={saving || entries.length === 0}>
+              {saving
+                ? 'Đang lưu...'
+                : 'Lưu tất cả (' + totalItems + ' khoản, ' + entries.length + ' chương trình)'}
             </button>
-            {nChot > 0 && !saving && (
-              <span className="muted">Trong đó {nChot} dòng sẽ chốt quyết toán</span>
+            {kieu === LOAI_CHOT && entries.length > 0 && !saving && (
+              <span className="muted">Kiểu Chốt: các khoản trên sẽ được chốt quyết toán</span>
             )}
           </div>
         </>
