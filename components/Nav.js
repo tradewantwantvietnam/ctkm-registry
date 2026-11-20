@@ -11,6 +11,7 @@ const LINKS = [
   { href: '/monthly', label: 'Theo dõi tháng' },
   { href: '/alerts', label: 'Báo động' },
   { href: '/export', label: 'Trích lục' },
+  { href: '/hidden', label: 'Đã ẩn' },
 ];
 
 export default function Nav() {
