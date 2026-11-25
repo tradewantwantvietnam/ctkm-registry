@@ -5,6 +5,9 @@ import Link from 'next/link';
 import { api } from '@/lib/api';
 import { formatVND, formatDate, formatMonth, monthOf, TRE_NGAY } from '@/lib/format';
 import { WarnBadge, StatusBadge, Progress } from '@/components/Badges';
+import Modal from '@/components/Modal';
+import ProgramForm from '@/components/ProgramForm';
+import PdfListModal from '@/components/PdfListModal';
 
 const STATUS_OPTIONS = ['Chưa chạy', 'Đang chạy', 'Đã kết thúc', 'Đã quyết toán'];
 
@@ -52,17 +55,33 @@ export default function HomePage() {
   const [hinh, setHinh] = useState('');
   const [warn, setWarn] = useState('');
 
+  const [showAdd, setShowAdd] = useState(false);
+  const [pdfFor, setPdfFor] = useState(null);
+  const [notice, setNotice] = useState(null);
+
+  async function load() {
+    const r = await api('list');
+    setRows(r);
+  }
+
   useEffect(() => {
-    api('list')
-      .then((r) => {
-        setRows(r);
-        setLoading(false);
-      })
+    load()
+      .then(() => setLoading(false))
       .catch((e) => {
         setError(e.message);
         setLoading(false);
       });
   }, []);
+
+  async function onAdded(id, info) {
+    setShowAdd(false);
+    setNotice({ id: id, pdfFailed: !!(info && info.pdfFailed) });
+    try {
+      await load();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
 
   const hinhOptions = useMemo(() => {
     const set = new Set();
@@ -119,17 +138,27 @@ export default function HomePage() {
     <div>
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
         <h1 style={{ margin: 0 }}>Danh sách chương trình khuyến mãi</h1>
-        <div className="row">
-          <Link href="/import" className="btn">
-            Nhập từ Excel
-          </Link>
-          <Link href="/new" className="btn btn-primary">
-            + Thêm chương trình
-          </Link>
-        </div>
+        <button type="button" className="btn btn-primary" onClick={() => setShowAdd(true)}>
+          + Thêm chương trình
+        </button>
       </div>
 
       {error && <div className="alert alert-error">Lỗi: {error}</div>}
+
+      {notice && (
+        <div className={'alert ' + (notice.pdfFailed ? 'alert-warn' : 'alert-ok')}>
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <span>
+              Đã lưu chương trình <b>{notice.id}</b>.{' '}
+              {notice.pdfFailed && 'Chưa tải được file PDF, hãy tải lại ở trang chi tiết. '}
+              <Link href={'/program?id=' + encodeURIComponent(notice.id)}>Mở trang chi tiết</Link>
+            </span>
+            <button type="button" className="btn btn-small" onClick={() => setNotice(null)}>
+              Đóng
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="stats">
         <div className="stat">
@@ -295,7 +324,15 @@ export default function HomePage() {
                         ))}
                       </div>
                     </td>
-                    <td>{r.so_pdf > 0 ? '📄 ' + r.so_pdf : <span className="muted">-</span>}</td>
+                    <td>
+                      {r.so_pdf > 0 ? (
+                        <button type="button" className="btn btn-small" onClick={() => setPdfFor(r)}>
+                          Xem{r.so_pdf > 1 ? ' (' + r.so_pdf + ')' : ''}
+                        </button>
+                      ) : (
+                        <span className="muted">-</span>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -319,6 +356,21 @@ export default function HomePage() {
           </table>
         </div>
       )}
+
+      {showAdd && (
+        <Modal title="Thêm chương trình" onClose={() => setShowAdd(false)} maxWidth={1000} dismissible={false}>
+          <ProgramForm
+            embedded
+            initial={null}
+            budgets={null}
+            isEdit={false}
+            onSaved={onAdded}
+            onCancel={() => setShowAdd(false)}
+          />
+        </Modal>
+      )}
+
+      {pdfFor && <PdfListModal program={pdfFor} onClose={() => setPdfFor(null)} />}
     </div>
   );
 }
