@@ -12,7 +12,9 @@ import BudgetEditor, {
   renameRegionInState,
 } from '@/components/BudgetEditor';
 
-export default function ProgramForm({ initial, budgets, isEdit }) {
+// embedded: dùng trong cửa sổ (bỏ khung thẻ). onSaved(id, { pdfFailed }) và onCancel: nếu có thì
+// form không tự chuyển trang mà báo lại cho nơi gọi.
+export default function ProgramForm({ initial, budgets, isEdit, embedded, onSaved, onCancel }) {
   const router = useRouter();
 
   const [form, setForm] = useState({
@@ -144,7 +146,7 @@ export default function ProgramForm({ initial, budgets, isEdit }) {
         },
       });
 
-      let notice = '';
+      let pdfFailed = false;
       if (file && !isEdit) {
         try {
           await uploadBigPdf(
@@ -153,11 +155,15 @@ export default function ProgramForm({ initial, budgets, isEdit }) {
             setPct
           );
         } catch (err) {
-          notice = '&notice=pdf_fail';
+          pdfFailed = true;
         }
       }
 
-      router.push('/program?id=' + encodeURIComponent(id) + notice);
+      if (onSaved) {
+        onSaved(id, { pdfFailed: pdfFailed });
+        return;
+      }
+      router.push('/program?id=' + encodeURIComponent(id) + (pdfFailed ? '&notice=pdf_fail' : ''));
     } catch (err) {
       setError(err.message);
       setSaving(false);
@@ -165,7 +171,7 @@ export default function ProgramForm({ initial, budgets, isEdit }) {
   }
 
   return (
-    <form className="card" onSubmit={onSubmit}>
+    <form className={embedded ? '' : 'card'} onSubmit={onSubmit}>
       {error && <div className="alert alert-error">{error}</div>}
 
       <div className="form-grid">
@@ -304,7 +310,12 @@ export default function ProgramForm({ initial, budgets, isEdit }) {
             ? 'Lưu thay đổi'
             : 'Lưu chương trình'}
         </button>
-        <button className="btn" type="button" disabled={saving} onClick={() => router.back()}>
+        <button
+          className="btn"
+          type="button"
+          disabled={saving}
+          onClick={() => (onCancel ? onCancel() : router.back())}
+        >
           Hủy
         </button>
       </div>
