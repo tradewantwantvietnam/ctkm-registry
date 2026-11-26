@@ -2,18 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
-import ImportWizard from '@/components/info/ImportWizard';
-import { PRICE_FIELDS, convertPrices, toNumber } from '@/lib/infoImport';
+import { toNumber } from '@/lib/infoImport';
 import { formatMonth } from '@/lib/format';
 
 const SHOW_MAX = 500;
 const BATCH = 2000;
-
-const COLUMNS = [
-  { key: 'dong', label: 'Dòng' },
-  { key: 'ma_sp', label: 'Mã SP' },
-  { key: 'gia_le', label: 'Giá lẻ' },
-];
 
 function curMonth() {
   const d = new Date();
@@ -75,14 +68,6 @@ export default function PriceTab() {
       alive = false;
     };
   }, [month]);
-
-  const known = useMemo(() => {
-    const m = {};
-    products.forEach((p) => {
-      m[kc(p.ma_sp)] = true;
-    });
-    return m;
-  }, [products]);
 
   function valueOf(p) {
     const k = kc(p.ma_sp);
@@ -164,31 +149,13 @@ export default function PriceTab() {
     try {
       const out = await api('copyPrices', { data: { from: copySource, to: month } });
       applyData(await fetchData(month));
-      setMsg('Đã sao chép giá cho ' + out.copied + ' sản phẩm' + (out.skipped ? ' (bỏ qua ' + out.skipped + ' sản phẩm đã có giá)' : '') + '.');
+      setMsg(
+        'Đã sao chép giá cho ' + out.copied + ' sản phẩm' + (out.skipped ? ' (bỏ qua ' + out.skipped + ' sản phẩm đã có giá)' : '') + '.'
+      );
     } catch (e) {
       setError(e.message);
     }
     setSaving(false);
-  }
-
-  async function onImport(items, mode, setProgress) {
-    let saved = 0;
-    const unknown = [];
-    for (let i = 0; i < items.length; i += BATCH) {
-      setProgress('Đang lưu ' + Math.min(i + BATCH, items.length) + '/' + items.length + '...');
-      const out = await api('savePrices', {
-        data: {
-          thang: month,
-          items: items.slice(i, i + BATCH).map((x) => ({ ma_sp: x.ma_sp, gia_le: x.gia_le })),
-        },
-      });
-      saved += out.saved;
-      out.unknown.forEach((u) => unknown.push(u));
-    }
-    applyData(await fetchData(month));
-    let text = 'Đã lưu giá ' + formatMonth(month) + ' cho ' + saved + ' sản phẩm.';
-    if (unknown.length > 0) text += '\nBỏ qua mã SP chưa có trong danh mục: ' + unknown.slice(0, 10).join(', ');
-    return text;
   }
 
   const monthOk = /^\d{4}-\d{2}$/.test(month);
@@ -219,7 +186,8 @@ export default function PriceTab() {
           </div>
         </div>
         <div className="hint" style={{ marginTop: 8 }}>
-          Nhập giá theo <b>đơn vị lẻ</b> (hộp, túi, gói). Thùng và lốc được đổi bằng quy cách ở tab Sản phẩm.
+          Giá thường được tải cùng file quy cách ở tab <b>Sản phẩm</b>. Tab này dùng để xem, sửa tay từng giá và sao chép
+          giá giữa các tháng. Giá nhập theo <b>đơn vị lẻ</b> (hộp, túi, gói).
         </div>
       </div>
 
@@ -246,21 +214,6 @@ export default function PriceTab() {
           <div className="stat-value">{products.length - nWithPrice}</div>
         </div>
       </div>
-
-      <ImportWizard
-        title={'Tải file giá ' + (monthOk ? formatMonth(month) : '')}
-        fields={PRICE_FIELDS}
-        convert={convertPrices}
-        convertArg={known}
-        columns={COLUMNS}
-        onImport={onImport}
-        disabled={!monthOk}
-        note={
-          'File có 2 cột: Mã SP và Giá lẻ. Giá sẽ lưu cho ' +
-          (monthOk ? formatMonth(month) : 'tháng đang chọn') +
-          '. Mã SP phải có trong danh mục sản phẩm.'
-        }
-      />
 
       <div className="card">
         <div className="toolbar" style={{ marginBottom: 0 }}>
@@ -324,7 +277,7 @@ export default function PriceTab() {
                 <tr>
                   <td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 24 }}>
                     {products.length === 0
-                      ? 'Chưa có sản phẩm nào. Hãy tải danh sách sản phẩm ở tab Sản phẩm trước.'
+                      ? 'Chưa có sản phẩm nào. Hãy tải file sản phẩm ở tab Sản phẩm trước.'
                       : 'Không có sản phẩm phù hợp'}
                   </td>
                 </tr>
